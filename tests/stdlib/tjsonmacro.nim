@@ -247,3 +247,15 @@ when isMainModule:
     let jnode = %b
     let data = jnode.to(Bird)
     doAssert data == b
+
+  block:
+    type
+      Foo = ref object of RootObj
+        id: int
+      Bar = ref object of Foo
+        name: string
+    let x = %* { "id": 1, "name": "Test" }
+    let data = to(x, Bar)
+    doAssert data.id == 1
+    doAssert data.name == "Test"
+    
