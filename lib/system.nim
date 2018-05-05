@@ -3223,7 +3223,7 @@ when not defined(JS): #and not defined(nimscript):
     when declared(initGC): initGC()
 
   when not defined(nimscript):
-    proc setControlCHook*(hook: proc () {.noconv.} not nil)
+    proc setControlCHook*(hook: proc () {.noconv.})
       ## allows you to override the behaviour of your application when CTRL+C
       ## is pressed. Only one such hook is supported.
 
@@ -4172,8 +4172,9 @@ template doAssertRaises*(exception, code: untyped): typed =
   if wrong:
     raiseAssert(astToStr(exception) & " wasn't raised by:\n" & astToStr(code))
 
-when defined(cpp) and appType != "lib" and not defined(js) and
-    not defined(nimscript) and hostOS != "standalone":
+when defined(cpp) and appType != "lib" and
+    not defined(js) and not defined(nimscript) and
+    hostOS != "standalone" and not defined(noCppExceptions):
   proc setTerminate(handler: proc() {.noconv.})
     {.importc: "std::set_terminate", header: "<exception>".}
   setTerminate proc() {.noconv.} =
