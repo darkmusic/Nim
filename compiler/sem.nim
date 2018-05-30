@@ -38,6 +38,7 @@ proc changeType(c: PContext; n: PNode, newType: PType, check: bool)
 proc semLambda(c: PContext, n: PNode, flags: TExprFlags): PNode
 proc semTypeNode(c: PContext, n: PNode, prev: PType): PType
 proc semStmt(c: PContext, n: PNode): PNode
+proc semOpAux(c: PContext, n: PNode)
 proc semParamList(c: PContext, n, genericParams: PNode, s: PSym)
 proc addParams(c: PContext, n: PNode, kind: TSymKind)
 proc maybeAddResult(c: PContext, s: PSym, n: PNode)
@@ -157,7 +158,7 @@ proc commonType*(x, y: PType): PType =
       a = a.lastSon.skipTypes({tyGenericInst})
       b = b.lastSon.skipTypes({tyGenericInst})
     if a.kind == tyObject and b.kind == tyObject:
-      result = commonSuperclass(a, b)
+      result = commonSuperclass(a, b, k)
       # this will trigger an error later:
       if result.isNil or result == a: return x
       if result == b: return y
