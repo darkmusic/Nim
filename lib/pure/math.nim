@@ -129,6 +129,12 @@ proc sum*[T](x: openArray[T]): T {.noSideEffect.} =
   ## If `x` is empty, 0 is returned.
   for i in items(x): result = result + i
 
+proc prod*[T](x: openArray[T]): T {.noSideEffect.} =
+  ## Computes the product of the elements in ``x``.
+  ## If ``x`` is empty, 1 is returned.
+  result = 1.T
+  for i in items(x): result = result * i
+
 {.push noSideEffect.}
 when not defined(JS): # C
   proc sqrt*(x: float32): float32 {.importc: "sqrtf", header: "<math.h>".}
@@ -141,6 +147,18 @@ when not defined(JS): # C
   proc ln*(x: float32): float32 {.importc: "logf", header: "<math.h>".}
   proc ln*(x: float64): float64 {.importc: "log", header: "<math.h>".}
     ## Computes the natural log of `x`
+else: # JS
+  proc sqrt*(x: float32): float32 {.importc: "Math.sqrt", nodecl.}
+  proc sqrt*(x: float64): float64 {.importc: "Math.sqrt", nodecl.}
+
+  proc ln*(x: float32): float32 {.importc: "Math.log", nodecl.}
+  proc ln*(x: float64): float64 {.importc: "Math.log", nodecl.}
+
+proc log*[T: SomeFloat](x, base: T): T =
+  ## Computes the logarithm ``base`` of ``x``
+  ln(x) / ln(base)
+
+when not defined(JS): # C
   proc log10*(x: float32): float32 {.importc: "log10f", header: "<math.h>".}
   proc log10*(x: float64): float64 {.importc: "log10", header: "<math.h>".}
     ## Computes the common logarithm (base 10) of `x`
@@ -198,11 +216,6 @@ when not defined(JS): # C
     ## Computes the inverse hyperbolic tangent of `x`
 
 else: # JS
-  proc sqrt*(x: float32): float32 {.importc: "Math.sqrt", nodecl.}
-  proc sqrt*(x: float64): float64 {.importc: "Math.sqrt", nodecl.}
-
-  proc ln*(x: float32): float32 {.importc: "Math.log", nodecl.}
-  proc ln*(x: float64): float64 {.importc: "Math.log", nodecl.}
   proc log10*(x: float32): float32 {.importc: "Math.log10", nodecl.}
   proc log10*(x: float64): float64 {.importc: "Math.log10", nodecl.}
   proc log2*(x: float32): float32 {.importc: "Math.log2", nodecl.}
@@ -274,12 +287,18 @@ when not defined(JS): # C
   proc erfc*(x: float64): float64 {.importc: "erfc", header: "<math.h>".}
     ## The complementary error function
 
+  proc gamma*(x: float32): float32 {.importc: "tgammaf", header: "<math.h>".}
+  proc gamma*(x: float64): float64 {.importc: "tgamma", header: "<math.h>".}
+    ## The gamma function
+  proc tgamma*(x: float32): float32
+    {.deprecated: "use gamma instead", importc: "tgammaf", header: "<math.h>".}
+  proc tgamma*(x: float64): float64
+    {.deprecated: "use gamma instead", importc: "tgamma", header: "<math.h>".}
+    ## The gamma function
+    ## **Deprecated since version 0.19.0**: Use ``gamma`` instead.
   proc lgamma*(x: float32): float32 {.importc: "lgammaf", header: "<math.h>".}
   proc lgamma*(x: float64): float64 {.importc: "lgamma", header: "<math.h>".}
     ## Natural log of the gamma function
-  proc tgamma*(x: float32): float32 {.importc: "tgammaf", header: "<math.h>".}
-  proc tgamma*(x: float64): float64 {.importc: "tgamma", header: "<math.h>".}
-    ## The gamma function
 
   proc floor*(x: float32): float32 {.importc: "floorf", header: "<math.h>".}
   proc floor*(x: float64): float64 {.importc: "floor", header: "<math.h>".}
@@ -372,7 +391,7 @@ when not defined(JS): # C
 
   proc `mod`*(x, y: float32): float32 {.importc: "fmodf", header: "<math.h>".}
   proc `mod`*(x, y: float64): float64 {.importc: "fmod", header: "<math.h>".}
-    ## Computes the modulo operation for float operators. 
+    ## Computes the modulo operation for float operators.
 else: # JS
   proc hypot*[T: float32|float64](x, y: T): T = return sqrt(x*x + y*y)
   proc pow*(x, y: float32): float32 {.importC: "Math.pow", nodecl.}
@@ -551,6 +570,7 @@ when isMainModule and not defined(JS):
     return sqrt(num)
 
   # check gamma function
+  assert(gamma(5.0) == 24.0) # 4!
   assert($tgamma(5.0) == $24.0) # 4!
   assert(lgamma(1.0) == 0.0) # ln(1.0) == 0.0
   assert(erf(6.0) > erf(5.0))
@@ -559,6 +579,12 @@ when isMainModule and not defined(JS):
 when isMainModule:
   # Function for approximate comparison of floats
   proc `==~`(x, y: float): bool = (abs(x-y) < 1e-9)
+
+  block: # prod
+    doAssert prod([1, 2, 3, 4]) == 24
+    doAssert prod([1.5, 3.4]) == 5.1
+    let x: seq[float] = @[]
+    doAssert prod(x) == 1.0
 
   block: # round() tests
     # Round to 0 decimal places
@@ -663,3 +689,6 @@ when isMainModule:
 
     doAssert floorMod(8.0, -3.0) ==~ -1.0
     doAssert floorMod(-8.5, 3.0) ==~ 0.5
+
+  block: # log
+    doAssert log(4.0, 3.0) == ln(4.0) / ln(3.0)

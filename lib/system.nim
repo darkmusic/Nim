@@ -1498,11 +1498,21 @@ when defined(nimdoc):
     ## macro, use the `error <manual.html#error-pragma>`_ or `fatal
     ## <manual.html#fatal-pragma>`_ pragmas.
 
-
 elif defined(genode):
-  proc quit*(errorcode: int = QuitSuccess) {.magic: "Exit", noreturn,
-    importcpp: "genodeEnv->parent().exit(@); Genode::sleep_forever()",
-    header: "<base/sleep.h>".}
+  include genode/env
+
+  var systemEnv {.exportc: runtimeEnvSym.}: GenodeEnvPtr
+
+  type GenodeEnv* = GenodeEnvPtr
+    ## Opaque type representing Genode environment.
+
+  proc quit*(env: GenodeEnv; errorcode: int) {.magic: "Exit", noreturn,
+    importcpp: "#->parent().exit(@); Genode::sleep_forever()", header: "<base/sleep.h>".}
+
+  proc quit*(errorcode: int = QuitSuccess) =
+    systemEnv.quit(errorCode)
+
+
 
 elif defined(nodejs):
   proc quit*(errorcode: int = QuitSuccess) {.magic: "Exit",
@@ -1523,7 +1533,6 @@ const hasAlloc = (hostOS != "standalone" or not defined(nogc)) and not defined(n
 when not defined(JS) and not defined(nimscript) and hostOS != "standalone":
   include "system/cgprocs"
 when not defined(JS) and not defined(nimscript) and hasAlloc:
-  proc setStackBottom(theStackBottom: pointer) {.compilerRtl, noinline, benign.}
   proc addChar(s: NimString, c: char): NimString {.compilerProc, benign.}
 
 proc add *[T](x: var seq[T], y: T) {.magic: "AppendSeqElem", noSideEffect.}
@@ -2639,6 +2648,11 @@ when not defined(nimscript) and hasAlloc:
     proc GC_unref*(x: string) {.magic: "GCunref", benign.}
       ## see the documentation of `GC_ref`.
 
+    when not defined(JS) and not defined(nimscript) and hasAlloc:
+      proc nimGC_setStackBottom*(theStackBottom: pointer) {.compilerRtl, noinline, benign.}
+      ## Expands operating GC stack range to `theStackBottom`. Does nothing
+      ## if current stack bottom is already lower than `theStackBottom`.
+
   else:
     template GC_disable* =
       {.warning: "GC_disable is a no-op in JavaScript".}
@@ -2677,7 +2691,7 @@ when not defined(nimscript) and hasAlloc:
       {.warning: "GC_unref is a no-op in JavaScript".}
 
     template GC_getStatistics*(): string =
-      {.warning: "GC_disableMarkAndSweep is a no-op in JavaScript".}
+      {.warning: "GC_getStatistics is a no-op in JavaScript".}
       ""
 
 template accumulateResult*(iter: untyped) =
@@ -2898,16 +2912,16 @@ when not defined(JS): #and not defined(nimscript):
       # WARNING: This is very fragile! An array size of 8 does not work on my
       # Linux 64bit system. -- That's because the stack direction is the other
       # way round.
-      when declared(setStackBottom):
+      when declared(nimGC_setStackBottom):
         var locals {.volatile.}: pointer
         locals = addr(locals)
-        setStackBottom(locals)
+        nimGC_setStackBottom(locals)
 
     proc initStackBottomWith(locals: pointer) {.inline, compilerproc.} =
       # We need to keep initStackBottom around for now to avoid
       # bootstrapping problems.
-      when declared(setStackBottom):
-        setStackBottom(locals)
+      when declared(nimGC_setStackBottom):
+        nimGC_setStackBottom(locals)
 
     {.push profiler: off.}
     var
@@ -4211,3 +4225,22 @@ when not defined(js):
 type
   ForLoopStmt* {.compilerProc.} = object ## special type that marks a macro
                                          ## as a `for-loop macro`:idx:
+
+when defined(genode):
+  var componentConstructHook*: proc (env: GenodeEnv) {.nimcall.}
+      ## Hook into the Genode component bootstrap process.
+      ## This hook is called after all globals are initialized.
+      ## When this hook is set the component will not automatically exit,
+      ## call ``quit`` explicitly to do so. This is the only available method
+      ## of accessing the initial Genode environment.
+
+  proc nim_component_construct(env: GenodeEnv) {.exportc.} =
+    ## Procedure called during ``Component::construct`` by the loader.
+    if componentConstructHook.isNil:
+      env.quit(programResult)
+        # No native Genode application initialization,
+        # exit as would POSIX.
+    else:
+      componentConstructHook(env)
+        # Perform application initialization
+        # and return to thread entrypoint.

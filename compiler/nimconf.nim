@@ -11,7 +11,7 @@
 
 import
   llstream, nversion, commands, os, strutils, msgs, platform, condsyms, lexer,
-  options, idents, wordrecg, strtabs, configuration
+  options, idents, wordrecg, strtabs, lineinfos
 
 # ---------------- configuration file parser -----------------------------
 # we use Nim's scanner here to save space and work
@@ -201,7 +201,8 @@ proc parseAssignment(L: var TLexer, tok: var TToken;
   else:
     processSwitch(s, val, passPP, info, config)
 
-proc readConfigFile(filename: string; cache: IdentCache; config: ConfigRef) =
+proc readConfigFile(
+    filename: string; cache: IdentCache; config: ConfigRef): bool =
   var
     L: TLexer
     tok: TToken
@@ -216,7 +217,7 @@ proc readConfigFile(filename: string; cache: IdentCache; config: ConfigRef) =
     while tok.tokType != tkEof: parseAssignment(L, tok, config, condStack)
     if len(condStack) > 0: lexMessage(L, errGenerated, "expected @end")
     closeLexer(L)
-    rawMessage(config, hintConf, filename)
+    return true
 
 proc getUserConfigPath(filename: string): string =
   result = joinPath(getConfigDir(), filename)
@@ -233,27 +234,33 @@ proc getSystemConfigPath(conf: ConfigRef; filename: string): string =
 proc loadConfigs*(cfg: string; cache: IdentCache; conf: ConfigRef) =
   setDefaultLibpath(conf)
 
+  var configFiles = newSeq[string]()
+
+  template readConfigFile(path: string) =
+    let configPath = path
+    if readConfigFile(configPath, cache, conf):
+      add(configFiles, configPath)
+
   if optSkipConfigFile notin conf.globalOptions:
-    readConfigFile(getSystemConfigPath(conf, cfg), cache, conf)
+    readConfigFile(getSystemConfigPath(conf, cfg))
 
   if optSkipUserConfigFile notin conf.globalOptions:
-    readConfigFile(getUserConfigPath(cfg), cache, conf)
+    readConfigFile(getUserConfigPath(cfg))
 
   let pd = if conf.projectPath.len > 0: conf.projectPath else: getCurrentDir()
   if optSkipParentConfigFiles notin conf.globalOptions:
     for dir in parentDirs(pd, fromRoot=true, inclusive=false):
-      readConfigFile(dir / cfg, cache, conf)
+      readConfigFile(dir / cfg)
 
   if optSkipProjConfigFile notin conf.globalOptions:
-    readConfigFile(pd / cfg, cache, conf)
+    readConfigFile(pd / cfg)
 
     if conf.projectName.len != 0:
       # new project wide config file:
       var projectConfig = changeFileExt(conf.projectFull, "nimcfg")
       if not fileExists(projectConfig):
         projectConfig = changeFileExt(conf.projectFull, "nim.cfg")
-      readConfigFile(projectConfig, cache, conf)
+      readConfigFile(projectConfig)
 
-proc loadConfigs*(cfg: string; conf: ConfigRef) =
-  # for backwards compatibility only.
-  loadConfigs(cfg, newIdentCache(), conf)
+  for filename in configFiles:
+    rawMessage(conf, hintConf, filename)

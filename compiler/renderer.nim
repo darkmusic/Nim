@@ -10,7 +10,7 @@
 # This module implements the renderer of the standard Nim representation.
 
 import
-  lexer, options, idents, strutils, ast, msgs, configuration
+  lexer, options, idents, strutils, ast, msgs, lineinfos
 
 type
   TRenderFlag* = enum
@@ -330,14 +330,15 @@ proc ulitAux(g: TSrcGen; n: PNode, x: BiggestInt, size: int): string =
 
 proc atom(g: TSrcGen; n: PNode): string =
   when defined(nimpretty):
+    doAssert g.config != nil, "g.config not initialized!"
     let comment = if n.info.commentOffsetA < n.info.commentOffsetB:
-                    " " & fileSection(g.fid, n.info.commentOffsetA, n.info.commentOffsetB)
+                    " " & fileSection(g.config, g.fid, n.info.commentOffsetA, n.info.commentOffsetB)
                   else:
                     ""
     if n.info.offsetA <= n.info.offsetB:
       # for some constructed tokens this can not be the case and we're better
       # off to not mess with the offset then.
-      return fileSection(g.fid, n.info.offsetA, n.info.offsetB) & comment
+      return fileSection(g.config, g.fid, n.info.offsetA, n.info.offsetB) & comment
   var f: float32
   case n.kind
   of nkEmpty: result = ""
@@ -811,8 +812,8 @@ proc gident(g: var TSrcGen, n: PNode) =
 
   var t: TTokType
   var s = atom(g, n)
-  if (s[0] in lexer.SymChars):
-    if (n.kind == nkIdent):
+  if s.len > 0 and s[0] in lexer.SymChars:
+    if n.kind == nkIdent:
       if (n.ident.id < ord(tokKeywordLow) - ord(tkSymbol)) or
           (n.ident.id > ord(tokKeywordHigh) - ord(tkSymbol)):
         t = tkSymbol
@@ -1413,11 +1414,21 @@ proc gsub(g: var TSrcGen, n: PNode, c: TContext) =
     put(g, tkParLe, "(ComesFrom|")
     gsub(g, n, 0)
     put(g, tkParRi, ")")
-  of nkGotoState, nkState:
+  of nkGotoState:
     var c: TContext
     initContext c
-    putWithSpace g, tkSymbol, if n.kind == nkState: "state" else: "goto"
+    putWithSpace g, tkSymbol, "goto"
     gsons(g, n, c)
+  of nkState:
+    var c: TContext
+    initContext c
+    putWithSpace g, tkSymbol, "state"
+    gsub(g, n[0], c)
+    putWithSpace(g, tkColon, ":")
+    indentNL(g)
+    gsons(g, n, c, 1)
+    dedent(g)
+
   of nkBreakState:
     put(g, tkTuple, "breakstate")
   of nkTypeClassTy:
