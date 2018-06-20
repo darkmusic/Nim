@@ -29,6 +29,9 @@ when isMainModule:
 import
   llstream, lexer, idents, strutils, ast, astalgo, msgs, options, lineinfos
 
+when defined(nimpretty2):
+  import layouter
+
 type
   TParser* = object            # A TParser object represents a file that
                                # is being parsed
@@ -41,6 +44,8 @@ type
     inPragma*: int             # Pragma level
     inSemiStmtList*: int
     emptyNode: PNode
+    when defined(nimpretty2):
+      em: Emitter
 
   SymbolMode = enum
     smNormal, smAllowNil, smAfterDot
@@ -83,6 +88,11 @@ proc getTok(p: var TParser) =
   ## `tok` member.
   rawGetTok(p.lex, p.tok)
   p.hasProgress = true
+  when defined(nimpretty2):
+    emitTok(p.em, p.lex, p.tok)
+    while p.tok.tokType == tkComment:
+      rawGetTok(p.lex, p.tok)
+      emitTok(p.em, p.lex, p.tok)
 
 proc openParser*(p: var TParser, fileIdx: FileIndex, inputStream: PLLStream,
                  cache: IdentCache; config: ConfigRef;
@@ -91,6 +101,8 @@ proc openParser*(p: var TParser, fileIdx: FileIndex, inputStream: PLLStream,
   ##
   initToken(p.tok)
   openLexer(p.lex, fileIdx, inputStream, cache, config)
+  when defined(nimpretty2):
+    openEmitter(p.em, cache, config, fileIdx)
   getTok(p)                   # read the first token
   p.firstTok = true
   p.strongSpaces = strongSpaces
@@ -104,6 +116,8 @@ proc openParser*(p: var TParser, filename: string, inputStream: PLLStream,
 proc closeParser(p: var TParser) =
   ## Close a parser, freeing up its resources.
   closeLexer(p.lex)
+  when defined(nimpretty2):
+    closeEmitter(p.em)
 
 proc parMessage(p: TParser, msg: TMsgKind, arg = "") =
   ## Produce and emit the parser message `arg` to output.
@@ -394,6 +408,8 @@ proc exprColonEqExpr(p: var TParser): PNode =
 
 proc exprList(p: var TParser, endTok: TTokType, result: PNode) =
   #| exprList = expr ^+ comma
+  when defined(nimpretty2):
+    inc p.em.doIndentMore
   getTok(p)
   optInd(p, result)
   # progress guaranteed
@@ -403,6 +419,8 @@ proc exprList(p: var TParser, endTok: TTokType, result: PNode) =
     if p.tok.tokType != tkComma: break
     getTok(p)
     optInd(p, a)
+  when defined(nimpretty2):
+    dec p.em.doIndentMore
 
 proc exprColonEqExprListAux(p: var TParser, endTok: TTokType, result: PNode) =
   assert(endTok in {tkCurlyRi, tkCurlyDotRi, tkBracketRi, tkParRi})
@@ -823,7 +841,11 @@ proc simpleExprAux(p: var TParser, limit: int, mode: TPrimaryMode): PNode =
   result = parseOperators(p, result, limit, mode)
 
 proc simpleExpr(p: var TParser, mode = pmNormal): PNode =
+  when defined(nimpretty2):
+    inc p.em.doIndentMore
   result = simpleExprAux(p, -1, mode)
+  when defined(nimpretty2):
+    dec p.em.doIndentMore
 
 proc parseIfExpr(p: var TParser, kind: TNodeKind): PNode =
   #| condExpr = expr colcom expr optInd
@@ -898,8 +920,12 @@ proc parsePragma(p: var TParser): PNode =
       getTok(p)
       skipComment(p, a)
   optPar(p)
-  if p.tok.tokType in {tkCurlyDotRi, tkCurlyRi}: getTok(p)
-  else: parMessage(p, "expected '.}'")
+  if p.tok.tokType in {tkCurlyDotRi, tkCurlyRi}:
+    when defined(nimpretty2):
+      if p.tok.tokType == tkCurlyRi: curlyRiWasPragma(p.em)
+    getTok(p)
+  else:
+    parMessage(p, "expected '.}'")
   dec p.inPragma
 
 proc identVis(p: var TParser; allowDot=false): PNode =
@@ -907,6 +933,8 @@ proc identVis(p: var TParser; allowDot=false): PNode =
   #| identVisDot = symbol '.' optInd symbol opr?
   var a = parseSymbol(p)
   if p.tok.tokType == tkOpr:
+    when defined(nimpretty2):
+      starWasExportMarker(p.em)
     result = newNodeP(nkPostfix, p)
     addSon(result, newIdentNodeP(p.tok.ident, p))
     addSon(result, a)
@@ -984,6 +1012,8 @@ proc parseTuple(p: var TParser, indentAllowed = false): PNode =
       var a = parseIdentColonEquals(p, {})
       addSon(result, a)
       if p.tok.tokType notin {tkComma, tkSemiColon}: break
+      when defined(nimpretty2):
+        commaWasSemicolon(p.em)
       getTok(p)
       skipComment(p, a)
     optPar(p)
@@ -1018,6 +1048,8 @@ proc parseParamList(p: var TParser, retColon = true): PNode =
   var a: PNode
   result = newNodeP(nkFormalParams, p)
   addSon(result, p.emptyNode) # return type
+  when defined(nimpretty2):
+    inc p.em.doIndentMore
   let hasParLe = p.tok.tokType == tkParLe and p.tok.indent < 0
   if hasParLe:
     getTok(p)
@@ -1037,6 +1069,8 @@ proc parseParamList(p: var TParser, retColon = true): PNode =
         break
       addSon(result, a)
       if p.tok.tokType notin {tkComma, tkSemiColon}: break
+      when defined(nimpretty2):
+        commaWasSemicolon(p.em)
       getTok(p)
       skipComment(p, a)
     optPar(p)
@@ -1050,6 +1084,8 @@ proc parseParamList(p: var TParser, retColon = true): PNode =
   elif not retColon and not hasParle:
     # Mark as "not there" in order to mark for deprecation in the semantic pass:
     result = p.emptyNode
+  when defined(nimpretty2):
+    dec p.em.doIndentMore
 
 proc optPragmas(p: var TParser): PNode =
   if p.tok.tokType == tkCurlyDotLe and (p.tok.indent < 0 or realInd(p)):
@@ -1652,6 +1688,8 @@ proc parseGenericParamList(p: var TParser): PNode =
     var a = parseGenericParam(p)
     addSon(result, a)
     if p.tok.tokType notin {tkComma, tkSemiColon}: break
+    when defined(nimpretty2):
+      commaWasSemicolon(p.em)
     getTok(p)
     skipComment(p, a)
   optPar(p)
