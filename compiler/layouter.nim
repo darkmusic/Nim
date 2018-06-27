@@ -20,11 +20,15 @@ type
   SplitKind = enum
     splitComma, splitParLe, splitAnd, splitOr, splitIn, splitBinary
 
+  SemicolonKind = enum
+    detectSemicolonKind, useSemicolon, dontTouch
+
   Emitter* = object
     config: ConfigRef
     fid: FileIndex
     lastTok: TTokType
     inquote: bool
+    semicolons: SemicolonKind
     col, lastLineNumber, lineSpan, indentLevel, indWidth: int
     nested: int
     doIndentMore*: int
@@ -74,9 +78,10 @@ template wr(x) =
 template goodCol(col): bool = col in 40..MaxLineLen
 
 const
-  splitters = {tkComma, tkSemicolon, tkParLe, tkParDotLe,
-               tkBracketLe, tkBracketLeColon, tkCurlyDotLe,
-               tkCurlyLe}
+  openPars = {tkParLe, tkParDotLe,
+              tkBracketLe, tkBracketLeColon, tkCurlyDotLe,
+              tkCurlyLe}
+  splitters = openPars + {tkComma, tkSemicolon}
   oprSet = {tkOpr, tkDiv, tkMod, tkShl, tkShr, tkIn, tkNotin, tkIs,
             tkIsnot, tkNot, tkOf, tkAs, tkDotDot, tkAnd, tkOr, tkXor}
 
@@ -169,7 +174,9 @@ proc emitTok*(em: var Emitter; L: TLexer; tok: TToken) =
   of tokKeywordLow..tokKeywordHigh:
     if endsInAlpha(em):
       wr(" ")
-    elif not em.inquote and not endsInWhite(em) and tok.tokType in oprSet:
+    elif not em.inquote and not endsInWhite(em) and
+        em.lastTok notin openPars:
+      #and tok.tokType in oprSet
       wr(" ")
 
     if not em.inquote:
@@ -255,7 +262,9 @@ proc starWasExportMarker*(em: var Emitter) =
     dec em.col, 2
 
 proc commaWasSemicolon*(em: var Emitter) =
-  if em.content.endsWith(", "):
+  if em.semicolons == detectSemicolonKind:
+    em.semicolons = if em.content.endsWith(", "): dontTouch else: useSemicolon
+  if em.semicolons == useSemicolon and em.content.endsWith(", "):
     setLen(em.content, em.content.len-2)
     em.content.add("; ")
 

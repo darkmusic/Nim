@@ -519,7 +519,9 @@ proc semVarOrLet(c: PContext, n: PNode, symkind: TSymKind): PNode =
         localError(c.config, a.info, errWrongNumberOfVariables)
       b = newNodeI(nkVarTuple, a.info)
       newSons(b, length)
-      b.sons[length-2] = a.sons[length-2] # keep type desc for doc generator
+      # keep type desc for doc generator
+      # NOTE: at the moment this is always ast.emptyNode, see parser.nim
+      b.sons[length-2] = a.sons[length-2]
       b.sons[length-1] = def
       addToVarSection(c, result, n, b)
     elif tup.kind == tyTuple and def.kind in {nkPar, nkTupleConstr} and
@@ -558,7 +560,12 @@ proc semVarOrLet(c: PContext, n: PNode, symkind: TSymKind): PNode =
           # keep documentation information:
           b.comment = a.comment
         addSon(b, newSymNode(v))
-        addSon(b, a.sons[length-2])      # keep type desc for doc generator
+        # keep type desc for doc generator, but only if the user explicitly
+        # added it
+        if a.sons[length-2].kind != nkEmpty:
+          addSon(b, newNodeIT(nkType, a.info, typ))
+        else:
+          addSon(b, a.sons[length-2])
         addSon(b, copyTree(def))
         addToVarSection(c, result, n, b)
       else:
@@ -1772,7 +1779,9 @@ proc semStaticStmt(c: PContext, n: PNode): PNode =
   #echo "semStaticStmt"
   #writeStackTrace()
   inc c.inStaticContext
+  openScope(c)
   let a = semStmt(c, n.sons[0])
+  closeScope(c)
   dec c.inStaticContext
   n.sons[0] = a
   evalStaticStmt(c.module, c.graph, a, c.p.owner)
