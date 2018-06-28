@@ -29,7 +29,7 @@
 - The returned tuple of ``system.instantiationInfo`` now has a third field
   containing the column of the instantiation.
 
-- ``cookies.setCookie` no longer assumes UTC for the expiration date.
+- ``cookies.setCookie`` no longer assumes UTC for the expiration date.
 - ``strutils.formatEng`` does not distinguish between ``nil`` and ``""``
   strings anymore for its ``unit`` parameter. Instead the space is controlled
   by a new parameter ``useUnitSpace``.
@@ -181,5 +181,8 @@
 
 - ``experimental`` is now a pragma / command line switch that can enable specific
   language extensions, it is not an all-or-nothing switch anymore.
+
+- Nintendo Switch was added as a new platform target. See [the compiler user guide](https://nim-lang.org/docs/nimc.html)
+  for more info.
 
 ### Bugfixes
