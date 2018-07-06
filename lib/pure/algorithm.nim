@@ -84,17 +84,27 @@ proc binarySearch*[T, K](a: openArray[T], key: K,
   if (len and (len - 1)) == 0:
     # when `len` is a power of 2, a faster shr can be used.
     var step = len shr 1
+    var cmpRes: int
     while step > 0:
       let i = result or step
-      if cmp(a[i], key) < 1:
+      cmpRes = cmp(a[i], key)
+      if cmpRes == 0:
+        return i
+
+      if cmpRes < 1:
         result = i
       step = step shr 1
     if cmp(a[result], key) != 0: result = -1
   else:
     var b = len
+    var cmpRes: int
     while result < b:
       var mid = (result + b) shr 1
-      if cmp(a[mid], key) < 0:
+      cmpRes = cmp(a[mid], key)
+      if cmpRes == 0:
+        return mid
+
+      if cmpRes < 0:
         result = mid + 1
       else:
         b = mid
@@ -112,14 +122,14 @@ const
   onlySafeCode = true
 
 proc lowerBound*[T, K](a: openArray[T], key: K, cmp: proc(x: T, k: K): int {.closure.}): int =
-  ## same as binarySearch except that if key is not in `a` then this
-  ## returns the location where `key` would be if it were. In other
-  ## words if you have a sorted sequence and you call
+  ## Returns a position to the first element in the `a` that is greater than `key`, or last
+  ## if no such element is found. In other words if you have a sorted sequence and you call
   ## insert(thing, elm, lowerBound(thing, elm))
   ## the sequence will still be sorted.
   ##
-  ## `cmp` is the comparator function to use, the expected return values are
+  ## The first version uses `cmp` to compare the elements. The expected return values are
   ## the same as that of system.cmp.
+  ## The second version uses the default comparison function `cmp`.
   ##
   ## example::
   ##
@@ -139,6 +149,36 @@ proc lowerBound*[T, K](a: openArray[T], key: K, cmp: proc(x: T, k: K): int {.clo
       count = step
 
 proc lowerBound*[T](a: openArray[T], key: T): int = lowerBound(a, key, cmp[T])
+
+proc upperBound*[T, K](a: openArray[T], key: K, cmp: proc(x: T, k: K): int {.closure.}): int =
+  ## Returns a position to the first element in the `a` that is not less
+  ## (i.e. greater or equal to) than `key`, or last if no such element is found.
+  ## In other words if you have a sorted sequence and you call
+  ## insert(thing, elm, upperBound(thing, elm))
+  ## the sequence will still be sorted.
+  ##
+  ## The first version uses `cmp` to compare the elements. The expected return values are
+  ## the same as that of system.cmp.
+  ## The second version uses the default comparison function `cmp`.
+  ##
+  ## example::
+  ##
+  ##   var arr = @[1,2,3,4,6,7,8,9]
+  ##   arr.insert(5, arr.upperBound(4))
+  ##   # after running the above arr is `[1,2,3,4,5,6,7,8,9]`
+  result = a.low
+  var count = a.high - a.low + 1
+  var step, pos: int
+  while count != 0:
+    step = count shr 1
+    pos = result + step
+    if cmp(a[pos], key) <= 0:
+      result = pos + 1
+      count -= step + 1
+    else:
+      count = step
+
+proc upperBound*[T](a: openArray[T], key: T): int = upperBound(a, key, cmp[T])
 
 template `<-` (a, b) =
   when false:
@@ -535,6 +575,11 @@ when isMainModule:
     doAssert lowerBound([1,2,4], 3, system.cmp[int]) == 2
     doAssert lowerBound([1,2,2,3], 4, system.cmp[int]) == 4
     doAssert lowerBound([1,2,3,10], 11) == 4
+
+  block upperBound:
+    doAssert upperBound([1,2,4], 3, system.cmp[int]) == 2
+    doAssert upperBound([1,2,2,3], 3, system.cmp[int]) == 4
+    doAssert upperBound([1,2,3,5], 3) == 3
 
   block fillEmptySeq:
     var s = newSeq[int]()

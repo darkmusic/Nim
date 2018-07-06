@@ -19,9 +19,9 @@ block:
     var x = default(type(0))
 
 # #6379
-static:
-  import algorithm
+import algorithm
 
+static:
   var numArray = [1, 2, 3, 4, -1]
   numArray.sort(cmp)
   assert numArray == [-1, 1, 2, 3, 4]
@@ -82,3 +82,11 @@ block:
 
     assert fileExists("MISSINGFILE") == false
     assert dirExists("MISSINGDIR") == false
+
+# #7210
+block:
+  static:
+    proc f(size: int): int =
+      var some = newStringOfCap(size)
+      result = size
+    doAssert f(4) == 4

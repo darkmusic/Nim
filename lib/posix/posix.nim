@@ -82,19 +82,29 @@ const
 # Special types
 type Sighandler = proc (a: cint) {.noconv.}
 
+const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
+    defined(openbsd) or defined(dragonfly) ## \
+  ## Boolean flag that indicates if the system supports nanosecond time
+  ## resolution in the fields of ``Stat``. Note that the nanosecond based fields
+  ## (``Stat.st_atim``, ``Stat.st_mtim`` and ``Stat.st_ctim``) can be accessed
+  ## without checking this flag, because this module defines fallback procs
+  ## when they are not available.
+
 # Platform specific stuff
 
 when defined(linux) and defined(amd64):
   include posix_linux_amd64
+elif defined(nintendoswitch):
+  include posix_nintendoswitch
 else:
   include posix_other
 
 # There used to be this name in posix.nim a long time ago, not sure why!
 {.deprecated: [cSIG_HOLD: SIG_HOLD].}
 
-when not defined(macosx) and not defined(android):
+when StatHasNanoseconds:
   proc st_atime*(s: Stat): Time {.inline.} =
-    ## Second-granularity time of last access
+    ## Second-granularity time of last access.
     result = s.st_atim.tv_sec
   proc st_mtime*(s: Stat): Time {.inline.} =
     ## Second-granularity time of last data modification.
@@ -102,6 +112,16 @@ when not defined(macosx) and not defined(android):
   proc st_ctime*(s: Stat): Time {.inline.} =
     ## Second-granularity time of last status change.
     result = s.st_ctim.tv_sec
+else:
+  proc st_atim*(s: Stat): TimeSpec {.inline.} =
+    ## Nanosecond-granularity time of last access.
+    result.tv_sec = s.st_atime
+  proc st_mtim*(s: Stat): TimeSpec {.inline.} =
+    ## Nanosecond-granularity time of last data modification.
+    result.tv_sec = s.st_mtime
+  proc st_ctim*(s: Stat): TimeSpec {.inline.} =
+    ## Nanosecond-granularity time of last data modification.
+    result.tv_sec = s.st_ctime
 
 when hasAioH:
   proc aio_cancel*(a1: cint, a2: ptr Taiocb): cint {.importc, header: "<aio.h>".}
@@ -167,7 +187,7 @@ proc fnmatch*(a1, a2: cstring, a3: cint): cint {.importc, header: "<fnmatch.h>".
 proc ftw*(a1: cstring,
          a2: proc (x1: cstring, x2: ptr Stat, x3: cint): cint {.noconv.},
          a3: cint): cint {.importc, header: "<ftw.h>".}
-when not (defined(linux) and defined(amd64)):
+when not (defined(linux) and defined(amd64)) and not defined(nintendoswitch):
   proc nftw*(a1: cstring,
             a2: proc (x1: cstring, x2: ptr Stat,
                       x3: cint, x4: ptr FTW): cint {.noconv.},
@@ -208,25 +228,26 @@ proc setlocale*(a1: cint, a2: cstring): cstring {.
 proc strfmon*(a1: cstring, a2: int, a3: cstring): int {.varargs,
    importc, header: "<monetary.h>".}
 
-proc mq_close*(a1: Mqd): cint {.importc, header: "<mqueue.h>".}
-proc mq_getattr*(a1: Mqd, a2: ptr MqAttr): cint {.
-  importc, header: "<mqueue.h>".}
-proc mq_notify*(a1: Mqd, a2: ptr SigEvent): cint {.
-  importc, header: "<mqueue.h>".}
-proc mq_open*(a1: cstring, a2: cint): Mqd {.
-  varargs, importc, header: "<mqueue.h>".}
-proc mq_receive*(a1: Mqd, a2: cstring, a3: int, a4: var int): int {.
-  importc, header: "<mqueue.h>".}
-proc mq_send*(a1: Mqd, a2: cstring, a3: int, a4: int): cint {.
-  importc, header: "<mqueue.h>".}
-proc mq_setattr*(a1: Mqd, a2, a3: ptr MqAttr): cint {.
-  importc, header: "<mqueue.h>".}
+when not defined(nintendoswitch):
+  proc mq_close*(a1: Mqd): cint {.importc, header: "<mqueue.h>".}
+  proc mq_getattr*(a1: Mqd, a2: ptr MqAttr): cint {.
+    importc, header: "<mqueue.h>".}
+  proc mq_notify*(a1: Mqd, a2: ptr SigEvent): cint {.
+    importc, header: "<mqueue.h>".}
+  proc mq_open*(a1: cstring, a2: cint): Mqd {.
+    varargs, importc, header: "<mqueue.h>".}
+  proc mq_receive*(a1: Mqd, a2: cstring, a3: int, a4: var int): int {.
+    importc, header: "<mqueue.h>".}
+  proc mq_send*(a1: Mqd, a2: cstring, a3: int, a4: int): cint {.
+    importc, header: "<mqueue.h>".}
+  proc mq_setattr*(a1: Mqd, a2, a3: ptr MqAttr): cint {.
+    importc, header: "<mqueue.h>".}
 
-proc mq_timedreceive*(a1: Mqd, a2: cstring, a3: int, a4: int,
-                      a5: ptr Timespec): int {.importc, header: "<mqueue.h>".}
-proc mq_timedsend*(a1: Mqd, a2: cstring, a3: int, a4: int,
-                   a5: ptr Timespec): cint {.importc, header: "<mqueue.h>".}
-proc mq_unlink*(a1: cstring): cint {.importc, header: "<mqueue.h>".}
+  proc mq_timedreceive*(a1: Mqd, a2: cstring, a3: int, a4: int,
+                        a5: ptr Timespec): int {.importc, header: "<mqueue.h>".}
+  proc mq_timedsend*(a1: Mqd, a2: cstring, a3: int, a4: int,
+                     a5: ptr Timespec): cint {.importc, header: "<mqueue.h>".}
+  proc mq_unlink*(a1: cstring): cint {.importc, header: "<mqueue.h>".}
 
 
 proc getpwnam*(a1: cstring): ptr Passwd {.importc, header: "<pwd.h>".}
@@ -585,7 +606,7 @@ proc posix_madvise*(a1: pointer, a2: int, a3: cint): cint {.
   importc, header: "<sys/mman.h>".}
 proc posix_mem_offset*(a1: pointer, a2: int, a3: var Off,
            a4: var int, a5: var cint): cint {.importc, header: "<sys/mman.h>".}
-when not (defined(linux) and defined(amd64)):
+when not (defined(linux) and defined(amd64)) and not defined(nintendoswitch):
   proc posix_typed_mem_get_info*(a1: cint,
     a2: var Posix_typed_mem_info): cint {.importc, header: "<sys/mman.h>".}
 proc posix_typed_mem_open*(a1: cstring, a2, a3: cint): cint {.
@@ -695,12 +716,12 @@ proc sigwait*(a1: var Sigset, a2: var cint): cint {.
 proc sigwaitinfo*(a1: var Sigset, a2: var SigInfo): cint {.
   importc, header: "<signal.h>".}
 
-
-proc catclose*(a1: Nl_catd): cint {.importc, header: "<nl_types.h>".}
-proc catgets*(a1: Nl_catd, a2, a3: cint, a4: cstring): cstring {.
-  importc, header: "<nl_types.h>".}
-proc catopen*(a1: cstring, a2: cint): Nl_catd {.
-  importc, header: "<nl_types.h>".}
+when not defined(nintendoswitch):
+  proc catclose*(a1: Nl_catd): cint {.importc, header: "<nl_types.h>".}
+  proc catgets*(a1: Nl_catd, a2, a3: cint, a4: cstring): cstring {.
+    importc, header: "<nl_types.h>".}
+  proc catopen*(a1: cstring, a2: cint): Nl_catd {.
+    importc, header: "<nl_types.h>".}
 
 proc sched_get_priority_max*(a1: cint): cint {.importc, header: "<sched.h>".}
 proc sched_get_priority_min*(a1: cint): cint {.importc, header: "<sched.h>".}
@@ -782,11 +803,12 @@ when hasSpawnH:
             a4: var Tposix_spawnattr,
             a5, a6: cstringArray): cint {.importc, header: "<spawn.h>".}
 
-proc getcontext*(a1: var Ucontext): cint {.importc, header: "<ucontext.h>".}
-proc makecontext*(a1: var Ucontext, a4: proc (){.noconv.}, a3: cint) {.
-  varargs, importc, header: "<ucontext.h>".}
-proc setcontext*(a1: var Ucontext): cint {.importc, header: "<ucontext.h>".}
-proc swapcontext*(a1, a2: var Ucontext): cint {.importc, header: "<ucontext.h>".}
+when not defined(nintendoswitch):
+  proc getcontext*(a1: var Ucontext): cint {.importc, header: "<ucontext.h>".}
+  proc makecontext*(a1: var Ucontext, a4: proc (){.noconv.}, a3: cint) {.
+    varargs, importc, header: "<ucontext.h>".}
+  proc setcontext*(a1: var Ucontext): cint {.importc, header: "<ucontext.h>".}
+  proc swapcontext*(a1, a2: var Ucontext): cint {.importc, header: "<ucontext.h>".}
 
 proc readv*(a1: cint, a2: ptr IOVec, a3: cint): int {.
   importc, header: "<sys/uio.h>".}

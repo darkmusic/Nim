@@ -328,14 +328,14 @@ proc toJson(x: NimNode): NimNode {.compiletime.} =
     result = newNimNode(nnkBracket)
     for i in 0 ..< x.len:
       result.add(toJson(x[i]))
-    result = newCall(bindSym"%", result)
+    result = newCall(bindSym("%", brOpen), result)
   of nnkTableConstr: # object
     if x.len == 0: return newCall(bindSym"newJObject")
     result = newNimNode(nnkTableConstr)
     for i in 0 ..< x.len:
       x[i].expectKind nnkExprColonExpr
       result.add newTree(nnkExprColonExpr, x[i][0], toJson(x[i][1]))
-    result = newCall(bindSym"%", result)
+    result = newCall(bindSym("%", brOpen), result)
   of nnkCurly: # empty object
     x.expectLen(0)
     result = newCall(bindSym"newJObject")
@@ -343,9 +343,9 @@ proc toJson(x: NimNode): NimNode {.compiletime.} =
     result = newCall(bindSym"newJNull")
   of nnkPar:
     if x.len == 1: result = toJson(x[0])
-    else: result = newCall(bindSym"%", x)
+    else: result = newCall(bindSym("%", brOpen), x)
   else:
-    result = newCall(bindSym"%", x)
+    result = newCall(bindSym("%", brOpen), x)
 
 macro `%*`*(x: untyped): untyped =
   ## Convert an expression to a JsonNode directly, without having to specify
@@ -558,6 +558,8 @@ proc escapeJson*(s: string; result: var string) =
     of '\t': result.add("\\t")
     of '\r': result.add("\\r")
     of '"': result.add("\\\"")
+    of '\0'..'\7': result.add("\\u000" & $ord(c))
+    of '\14'..'\31': result.add("\\u00" & $ord(c))
     of '\\': result.add("\\\\")
     else: result.add(c)
   result.add("\"")
@@ -1581,6 +1583,7 @@ when isMainModule:
     doAssert(parsed2{"repository", "description"}.str=="IRC Library for Haskell", "Couldn't fetch via multiply nested key using {}")
 
   doAssert escapeJson("\10Foo🎃barÄ") == "\"\\nFoo🎃barÄ\""
+  doAssert escapeJson("\0\7\20") == "\"\\u0000\\u0007\\u0020\"" # for #7887
 
   # Test with extra data
   when not defined(js):
