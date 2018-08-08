@@ -133,18 +133,18 @@ proc elemType*(t: PType): PType =
   else: result = t.lastSon
   assert(result != nil)
 
-proc isOrdinalType*(t: PType): bool =
+proc enumHasHoles*(t: PType): bool =
+  var b = t.skipTypes({tyRange, tyGenericInst, tyAlias, tySink})
+  result = b.kind == tyEnum and tfEnumHasHoles in b.flags
+
+proc isOrdinalType*(t: PType, allowEnumWithHoles = false): bool =
   assert(t != nil)
   const
     # caution: uint, uint64 are no ordinal types!
     baseKinds = {tyChar,tyInt..tyInt64,tyUInt8..tyUInt32,tyBool,tyEnum}
     parentKinds = {tyRange, tyOrdinal, tyGenericInst, tyAlias, tySink, tyDistinct}
-  t.kind in baseKinds or (t.kind in parentKinds and isOrdinalType(t.sons[0]))
-
-proc enumHasHoles*(t: PType): bool =
-  var b = t
-  while b.kind in {tyRange, tyGenericInst, tyAlias, tySink}: b = b.sons[0]
-  result = b.kind == tyEnum and tfEnumHasHoles in b.flags
+  (t.kind in baseKinds and not (t.enumHasHoles and not allowEnumWithHoles)) or
+    (t.kind in parentKinds and isOrdinalType(t.lastSon))
 
 proc iterOverTypeAux(marker: var IntSet, t: PType, iter: TTypeIter,
                      closure: RootRef): bool
@@ -496,9 +496,15 @@ proc typeToString(typ: PType, prefer: TPreferedDesc = preferName): string =
       add(result, typeToString(t.sons[i]))
     result.add "]"
   of tyAnd:
-    result = typeToString(t.sons[0]) & " and " & typeToString(t.sons[1])
+    for i, son in t.sons:
+      result.add(typeToString(son))
+      if i < t.sons.high:
+        result.add(" and ")
   of tyOr:
-    result = typeToString(t.sons[0]) & " or " & typeToString(t.sons[1])
+    for i, son in t.sons:
+      result.add(typeToString(son))
+      if i < t.sons.high:
+        result.add(" or ")
   of tyNot:
     result = "not " & typeToString(t.sons[0])
   of tyExpr:
@@ -623,7 +629,7 @@ proc firstOrd*(conf: ConfigRef; t: PType): BiggestInt =
       assert(t.n.sons[0].kind == nkSym)
       result = t.n.sons[0].sym.position
   of tyGenericInst, tyDistinct, tyTypeDesc, tyAlias, tySink,
-     tyStatic, tyInferred, tyUserTypeClassInst:
+     tyStatic, tyInferred, tyUserTypeClasses:
     result = firstOrd(conf, lastSon(t))
   of tyOrdinal:
     if t.len > 0: result = firstOrd(conf, lastSon(t))
@@ -642,7 +648,7 @@ proc firstFloat*(t: PType): BiggestFloat =
     getFloatValue(t.n.sons[0])
   of tyVar: firstFloat(t.sons[0])
   of tyGenericInst, tyDistinct, tyTypeDesc, tyAlias, tySink,
-     tyStatic, tyInferred:
+     tyStatic, tyInferred, tyUserTypeClasses:
     firstFloat(lastSon(t))
   else:
     internalError(newPartialConfigRef(), "invalid kind for firstFloat(" & $t.kind & ')')
@@ -679,7 +685,7 @@ proc lastOrd*(conf: ConfigRef; t: PType; fixedUnsigned = false): BiggestInt =
     assert(t.n.sons[sonsLen(t.n) - 1].kind == nkSym)
     result = t.n.sons[sonsLen(t.n) - 1].sym.position
   of tyGenericInst, tyDistinct, tyTypeDesc, tyAlias, tySink,
-     tyStatic, tyInferred:
+     tyStatic, tyInferred, tyUserTypeClasses:
     result = lastOrd(conf, lastSon(t))
   of tyProxy: result = 0
   of tyOrdinal:
@@ -699,7 +705,7 @@ proc lastFloat*(t: PType): BiggestFloat =
     assert(t.n.kind == nkRange)
     getFloatValue(t.n.sons[1])
   of tyGenericInst, tyDistinct, tyTypeDesc, tyAlias, tySink,
-     tyStatic, tyInferred:
+     tyStatic, tyInferred, tyUserTypeClasses:
     lastFloat(lastSon(t))
   else:
     internalError(newPartialConfigRef(), "invalid kind for lastFloat(" & $t.kind & ')')
@@ -707,7 +713,7 @@ proc lastFloat*(t: PType): BiggestFloat =
 
 
 proc lengthOrd*(conf: ConfigRef; t: PType): BiggestInt =
-  case t.kind
+  case t.skipTypes(tyUserTypeClasses).kind
   of tyInt64, tyInt32, tyInt: result = lastOrd(conf, t)
   of tyDistinct: result = lengthOrd(conf, t.sons[0])
   else:
@@ -717,7 +723,7 @@ proc lengthOrd*(conf: ConfigRef; t: PType): BiggestInt =
     if last == high(BiggestInt) and first <= 0:
       result = last
     else:
-      result = lastOrd(conf, t) - firstOrd(conf, t) + 1
+      result = last - first + 1
 
 # -------------- type equality -----------------------------------------------
 

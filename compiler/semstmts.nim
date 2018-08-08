@@ -111,13 +111,15 @@ proc semExprBranchScope(c: PContext, n: PNode): PNode =
 const
   skipForDiscardable = {nkIfStmt, nkIfExpr, nkCaseStmt, nkOfBranch,
     nkElse, nkStmtListExpr, nkTryStmt, nkFinally, nkExceptBranch,
-    nkElifBranch, nkElifExpr, nkElseExpr, nkBlockStmt, nkBlockExpr}
+    nkElifBranch, nkElifExpr, nkElseExpr, nkBlockStmt, nkBlockExpr,
+    nkHiddenStdConv}
 
 proc implicitlyDiscardable(n: PNode): bool =
   var n = n
   while n.kind in skipForDiscardable: n = n.lastSon
-  result = isCallExpr(n) and n.sons[0].kind == nkSym and
-           sfDiscardable in n.sons[0].sym.flags
+  result = n.kind == nkRaiseStmt or
+           (isCallExpr(n) and n.sons[0].kind == nkSym and
+           sfDiscardable in n.sons[0].sym.flags)
 
 proc fixNilType(c: PContext; n: PNode) =
   if isAtom(n):
@@ -132,11 +134,8 @@ proc discardCheck(c: PContext, result: PNode) =
   if c.matchedConcept != nil: return
   if result.typ != nil and result.typ.kind notin {tyStmt, tyVoid}:
     if implicitlyDiscardable(result):
-      var n = result
-      result.typ = nil
-      while n.kind in skipForDiscardable:
-        n = n.lastSon
-        n.typ = nil
+      var n = newNodeI(nkDiscardStmt, result.info, 1)
+      n[0] = result
     elif result.typ.kind != tyError and c.config.cmd != cmdInteractive:
       var n = result
       while n.kind in skipForDiscardable: n = n.lastSon
@@ -156,9 +155,8 @@ proc semIf(c: PContext, n: PNode): PNode =
   for i in countup(0, sonsLen(n) - 1):
     var it = n.sons[i]
     if it.len == 2:
-      when newScopeForIf: openScope(c)
+      openScope(c)
       it.sons[0] = forceBool(c, semExprWithType(c, it.sons[0]))
-      when not newScopeForIf: openScope(c)
       it.sons[1] = semExprBranch(c, it.sons[1])
       typ = commonType(typ, it.sons[1])
       closeScope(c)
@@ -213,9 +211,8 @@ proc semCase(c: PContext, n: PNode): PNode =
     of nkElifBranch:
       chckCovered = false
       checkSonsLen(x, 2, c.config)
-      when newScopeForIf: openScope(c)
+      openScope(c)
       x.sons[0] = forceBool(c, semExprWithType(c, x.sons[0]))
-      when not newScopeForIf: openScope(c)
       x.sons[1] = semExprBranch(c, x.sons[1])
       typ = commonType(typ, x.sons[1])
       closeScope(c)
