@@ -31,7 +31,11 @@ proc showErrorMessage(data: cstring) {.gcsafe.} =
   if errorMessageWriter != nil:
     errorMessageWriter($data)
   else:
-    writeToStdErr(data)
+    when defined(genode):
+      # stderr not available by default, use the LOG session
+      echo data
+    else:
+      writeToStdErr(data)
 
 proc quitOrDebug() {.inline.} =
   when not defined(endb):
@@ -131,6 +135,10 @@ proc popCurrentExceptionEx(id: uint) {.compilerRtl.} =
       quitOrDebug()
     prev.up = cur.up
 
+proc closureIterSetupExc(e: ref Exception) {.compilerproc, inline.} =
+  if not e.isNil:
+    currException = e
+
 # some platforms have native support for stack traces:
 const
   nativeStackTraceSupported* = (defined(macosx) or defined(linux)) and
@@ -205,7 +213,7 @@ proc auxWriteStackTrace(f: PFrame; s: var seq[StackTraceEntry]) =
     inc(i)
     it = it.prev
   var last = i-1
-  if s.isNil:
+  if s.len == 0:
     s = newSeq[StackTraceEntry](i)
   else:
     last = s.len + i - 1
@@ -299,7 +307,7 @@ when hasSomeStackTrace:
     when NimStackTrace:
       auxWriteStackTrace(framePtr, s)
     else:
-      s = nil
+      s = @[]
 
   proc stackTraceAvailable(): bool =
     when NimStackTrace:
@@ -353,10 +361,10 @@ proc raiseExceptionAux(e: ref Exception) =
     else:
       when hasSomeStackTrace:
         var buf = newStringOfCap(2000)
-        if isNil(e.trace): rawWriteStackTrace(buf)
+        if e.trace.len == 0: rawWriteStackTrace(buf)
         else: add(buf, $e.trace)
         add(buf, "Error: unhandled exception: ")
-        if not isNil(e.msg): add(buf, e.msg)
+        add(buf, e.msg)
         add(buf, " [")
         add(buf, $e.name)
         add(buf, "]\n")
@@ -374,7 +382,7 @@ proc raiseExceptionAux(e: ref Exception) =
         var buf: array[0..2000, char]
         var L = 0
         add(buf, "Error: unhandled exception: ")
-        if not isNil(e.msg): add(buf, e.msg)
+        add(buf, e.msg)
         add(buf, " [")
         xadd(buf, e.name, e.name.len)
         add(buf, "]\n")
@@ -389,7 +397,7 @@ proc raiseExceptionAux(e: ref Exception) =
 proc raiseException(e: ref Exception, ename: cstring) {.compilerRtl.} =
   if e.name.isNil: e.name = ename
   when hasSomeStackTrace:
-    if e.trace.isNil:
+    if e.trace.len == 0:
       rawWriteStackTrace(e.trace)
     elif framePtr != nil:
       e.trace.add reraisedFrom(reraisedFromBegin)
@@ -419,15 +427,16 @@ proc getStackTrace(): string =
     result = "No stack traceback available\n"
 
 proc getStackTrace(e: ref Exception): string =
-  if not isNil(e) and not isNil(e.trace):
+  if not isNil(e):
     result = $e.trace
   else:
     result = ""
 
-proc getStackTraceEntries*(e: ref Exception): seq[StackTraceEntry] =
-  ## Returns the attached stack trace to the exception ``e`` as
-  ## a ``seq``. This is not yet available for the JS backend.
-  shallowCopy(result, e.trace)
+when not defined(gcDestructors):
+  proc getStackTraceEntries*(e: ref Exception): seq[StackTraceEntry] =
+    ## Returns the attached stack trace to the exception ``e`` as
+    ## a ``seq``. This is not yet available for the JS backend.
+    shallowCopy(result, e.trace)
 
 when defined(nimRequiresNimFrame):
   proc stackOverflow() {.noinline.} =

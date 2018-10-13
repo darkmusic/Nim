@@ -64,8 +64,6 @@ type
     methodPost,          ## query uses the POST method
     methodGet            ## query uses the GET method
 
-{.deprecated: [TRequestMethod: RequestMethod, ECgi: CgiError].}
-
 proc cgiError*(msg: string) {.noreturn.} =
   ## raises an ECgi exception with message `msg`.
   var e: ref CgiError
@@ -137,10 +135,9 @@ iterator decodeData*(allowedMethods: set[RequestMethod] =
   ## Reads and decodes CGI data and yields the (name, value) pairs the
   ## data consists of. If the client does not use a method listed in the
   ## `allowedMethods` set, an `ECgi` exception is raised.
-  var data = getEncodedData(allowedMethods)
-  if not isNil(data):
-    for key, value in decodeData(data):
-      yield (key, value)
+  let data = getEncodedData(allowedMethods)
+  for key, value in decodeData(data):
+    yield (key, value)
 
 proc readData*(allowedMethods: set[RequestMethod] =
                {methodNone, methodPost, methodGet}): StringTableRef =

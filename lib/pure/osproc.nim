@@ -61,9 +61,6 @@ type
   Process* = ref ProcessObj ## represents an operating system process
 
 
-{.deprecated: [TProcess: ProcessObj, PProcess: Process,
-  TProcessOption: ProcessOption].}
-
 const poUseShell* {.deprecated.} = poUsePath
   ## Deprecated alias for poUsePath.
 
@@ -239,6 +236,7 @@ proc execProcesses*(cmds: openArray[string],
   if n > 1:
     var i = 0
     var q = newSeq[Process](n)
+    var idxs = newSeq[int](n) # map process index to cmds index
 
     when defined(windows):
       var w: WOHandleArray
@@ -251,6 +249,7 @@ proc execProcesses*(cmds: openArray[string],
       if beforeRunEvent != nil:
         beforeRunEvent(i)
       q[i] = startProcess(cmds[i], options = options + {poEvalCommand})
+      idxs[i] = i
       when defined(windows):
         w[i] = q[i].fProcessHandle
       inc(i)
@@ -307,12 +306,13 @@ proc execProcesses*(cmds: openArray[string],
 
       if rexit >= 0:
         result = max(result, abs(q[rexit].peekExitCode()))
-        if afterRunEvent != nil: afterRunEvent(rexit, q[rexit])
+        if afterRunEvent != nil: afterRunEvent(idxs[rexit], q[rexit])
         close(q[rexit])
         if i < len(cmds):
           if beforeRunEvent != nil: beforeRunEvent(i)
           q[rexit] = startProcess(cmds[i],
                                   options = options + {poEvalCommand})
+          idxs[rexit] = i
           when defined(windows):
             w[rexit] = q[rexit].fProcessHandle
           inc(i)
@@ -373,17 +373,15 @@ template streamAccess(p) =
 when defined(Windows) and not defined(useNimRtl):
   # We need to implement a handle stream for Windows:
   type
-    PFileHandleStream = ref FileHandleStream
-    FileHandleStream = object of StreamObj
+    FileHandleStream = ref object of StreamObj
       handle: Handle
       atTheEnd: bool
-  {.deprecated: [TFileHandleStream: FileHandleStream].}
 
   proc hsClose(s: Stream) = discard # nothing to do here
-  proc hsAtEnd(s: Stream): bool = return PFileHandleStream(s).atTheEnd
+  proc hsAtEnd(s: Stream): bool = return FileHandleStream(s).atTheEnd
 
   proc hsReadData(s: Stream, buffer: pointer, bufLen: int): int =
-    var s = PFileHandleStream(s)
+    var s = FileHandleStream(s)
     if s.atTheEnd: return 0
     var br: int32
     var a = winlean.readFile(s.handle, buffer, bufLen.cint, addr br, nil)
@@ -395,13 +393,13 @@ when defined(Windows) and not defined(useNimRtl):
     result = br
 
   proc hsWriteData(s: Stream, buffer: pointer, bufLen: int) =
-    var s = PFileHandleStream(s)
+    var s = FileHandleStream(s)
     var bytesWritten: int32
     var a = winlean.writeFile(s.handle, buffer, bufLen.cint,
                               addr bytesWritten, nil)
     if a == 0: raiseOSError(osLastError())
 
-  proc newFileHandleStream(handle: Handle): PFileHandleStream =
+  proc newFileHandleStream(handle: Handle): FileHandleStream =
     new(result)
     result.handle = handle
     result.closeImpl = hsClose
@@ -527,7 +525,7 @@ when defined(Windows) and not defined(useNimRtl):
           if setHandleInformation(he, DWORD(1), DWORD(0)) == 0'i32:
             raiseOsError(osLastError())
         if setHandleInformation(hi, DWORD(1), DWORD(0)) == 0'i32:
-          raiseOsError(osLastError())  
+          raiseOsError(osLastError())
         if setHandleInformation(ho, DWORD(1), DWORD(0)) == 0'i32:
           raiseOsError(osLastError())
       else:
@@ -752,14 +750,14 @@ elif not defined(useNimRtl):
       copyMem(result[i], addr(x[0]), x.len+1)
       inc(i)
 
-  type StartProcessData = object
-    sysCommand: string
-    sysArgs: cstringArray
-    sysEnv: cstringArray
-    workingDir: cstring
-    pStdin, pStdout, pStderr, pErrorPipe: array[0..1, cint]
-    options: set[ProcessOption]
-  {.deprecated: [TStartProcessData: StartProcessData].}
+  type
+    StartProcessData = object
+      sysCommand: string
+      sysArgs: cstringArray
+      sysEnv: cstringArray
+      workingDir: cstring
+      pStdin, pStdout, pStderr, pErrorPipe: array[0..1, cint]
+      options: set[ProcessOption]
 
   const useProcessAuxSpawn = declared(posix_spawn) and not defined(useFork) and
                              not defined(useClone) and not defined(linux)
@@ -837,7 +835,7 @@ elif not defined(useNimRtl):
 
     # Parent process. Copy process information.
     if poEchoCmd in options:
-      echo(command, " ", join(args, " "))
+      when declared(echo): echo(command, " ", join(args, " "))
     result.id = pid
     result.exitFlag = false
 
@@ -890,7 +888,7 @@ elif not defined(useNimRtl):
         chck posix_spawn_file_actions_addclose(fops, data.pStdout[readIdx])
         chck posix_spawn_file_actions_adddup2(fops, data.pStdout[writeIdx], writeIdx)
         chck posix_spawn_file_actions_addclose(fops, data.pStderr[readIdx])
-        if (poStdErrToStdOut in data.options):
+        if poStdErrToStdOut in data.options:
           chck posix_spawn_file_actions_adddup2(fops, data.pStdout[writeIdx], 2)
         else:
           chck posix_spawn_file_actions_adddup2(fops, data.pStderr[writeIdx], 2)
@@ -907,7 +905,7 @@ elif not defined(useNimRtl):
 
       discard posix_spawn_file_actions_destroy(fops)
       discard posix_spawnattr_destroy(attr)
-      if res != 0'i32: raiseOSError(OSErrorCode(res))
+      if res != 0'i32: raiseOSError(OSErrorCode(res), data.sysCommand)
 
       return pid
   else:

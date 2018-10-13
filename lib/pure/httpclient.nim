@@ -185,7 +185,7 @@ proc body*(response: Response): string =
   ## Retrieves the specified response's body.
   ##
   ## The response's body stream is read synchronously.
-  if response.body.isNil():
+  if response.body.len == 0:
     response.body = response.bodyStream.readAll()
   return response.body
 
@@ -198,7 +198,7 @@ proc `body=`*(response: Response, value: string) {.deprecated.} =
 proc body*(response: AsyncResponse): Future[string] {.async.} =
   ## Reads the response's body and caches it. The read is performed only
   ## once.
-  if response.body.isNil:
+  if response.body.len == 0:
     response.body = await readAll(response.bodyStream)
   return response.body
 
@@ -218,10 +218,6 @@ type
   HttpRequestError* = object of IOError ## Thrown in the ``getContent`` proc
                                         ## and ``postContent`` proc,
                                         ## when the server returns an error
-
-{.deprecated: [TResponse: Response, PProxy: Proxy,
-  EInvalidProtocol: ProtocolError, EHttpRequestErr: HttpRequestError
-].}
 
 const defUserAgent* = "Nim httpclient/" & NimVersion
 
@@ -362,21 +358,17 @@ proc parseResponse(s: Socket, getBody: bool, timeout: int): Response =
   else:
     result.body = ""
 
-{.deprecated: [THttpMethod: HttpMethod].}
-
 when not defined(ssl):
   type SSLContext = ref object
 var defaultSSLContext {.threadvar.}: SSLContext
 
-when defined(ssl):
-  defaultSSLContext = newContext(verifyMode = CVerifyNone)
-  template contextOrDefault(ctx: SSLContext): SSLContext =
-    var result = ctx
-    if ctx == nil:
-      if defaultSSLContext == nil:
-        defaultSSLContext = newContext(verifyMode = CVerifyNone)
+proc getDefaultSSL(): SSLContext =
+  result = defaultSslContext
+  when defined(ssl):
+    if result == nil:
+      defaultSSLContext = newContext(verifyMode = CVerifyNone)
       result = defaultSSLContext
-    result
+      doAssert result != nil, "failure to initialize the SSL context"
 
 proc newProxy*(url: string, auth = ""): Proxy =
   ## Constructs a new ``TProxy`` object.
@@ -386,23 +378,23 @@ proc newMultipartData*: MultipartData =
   ## Constructs a new ``MultipartData`` object.
   MultipartData(content: @[])
 
-proc add*(p: var MultipartData, name, content: string, filename: string = nil,
-          contentType: string = nil) =
+proc add*(p: var MultipartData, name, content: string, filename: string = "",
+          contentType: string = "") =
   ## Add a value to the multipart data. Raises a `ValueError` exception if
   ## `name`, `filename` or `contentType` contain newline characters.
 
   if {'\c','\L'} in name:
     raise newException(ValueError, "name contains a newline character")
-  if filename != nil and {'\c','\L'} in filename:
+  if {'\c','\L'} in filename:
     raise newException(ValueError, "filename contains a newline character")
-  if contentType != nil and {'\c','\L'} in contentType:
+  if {'\c','\L'} in contentType:
     raise newException(ValueError, "contentType contains a newline character")
 
   var str = "Content-Disposition: form-data; name=\"" & name & "\""
-  if filename != nil:
+  if filename.len > 0:
     str.add("; filename=\"" & filename & "\"")
   str.add("\c\L")
-  if contentType != nil:
+  if contentType.len > 0:
     str.add("Content-Type: " & contentType & "\c\L")
   str.add("\c\L" & content & "\c\L")
 
@@ -442,7 +434,7 @@ proc addFiles*(p: var MultipartData, xs: openarray[tuple[name, file: string]]):
     var contentType: string
     let (_, fName, ext) = splitFile(file)
     if ext.len > 0:
-      contentType = m.getMimetype(ext[1..ext.high], nil)
+      contentType = m.getMimetype(ext[1..ext.high], "")
     p.add(name, readFile(file), fName & ext, contentType)
   result = p
 
@@ -465,7 +457,7 @@ proc `[]=`*(p: var MultipartData, name: string,
   p.add(name, file.content, file.name, file.contentType)
 
 proc format(p: MultipartData): tuple[contentType, body: string] =
-  if p == nil or p.content == nil or p.content.len == 0:
+  if p == nil or p.content.len == 0:
     return ("", "")
 
   # Create boundary that is not in the data to be formatted
@@ -486,9 +478,9 @@ proc format(p: MultipartData): tuple[contentType, body: string] =
   result.body.add("--" & bound & "--\c\L")
 
 proc request*(url: string, httpMethod: string, extraHeaders = "",
-              body = "", sslContext = defaultSSLContext, timeout = -1,
+              body = "", sslContext = getDefaultSSL(), timeout = -1,
               userAgent = defUserAgent, proxy: Proxy = nil): Response
-              {.deprecated.} =
+              {.deprecated: "use HttpClient.request instead".} =
   ## | Requests ``url`` with the custom method string specified by the
   ## | ``httpMethod`` parameter.
   ## | Extra headers can be specified and must be separated by ``\c\L``
@@ -585,8 +577,8 @@ proc request*(url: string, httpMethod: string, extraHeaders = "",
 
   result = parseResponse(s, httpMethod != "HEAD", timeout)
 
-proc request*(url: string, httpMethod = httpGET, extraHeaders = "",
-              body = "", sslContext = defaultSSLContext, timeout = -1,
+proc request*(url: string, httpMethod = HttpGET, extraHeaders = "",
+              body = "", sslContext = getDefaultSSL(), timeout = -1,
               userAgent = defUserAgent, proxy: Proxy = nil): Response
               {.deprecated.} =
   ## | Requests ``url`` with the specified ``httpMethod``.
@@ -617,7 +609,7 @@ proc getNewLocation(lastURL: string, headers: HttpHeaders): string =
     result = $parsed
 
 proc get*(url: string, extraHeaders = "", maxRedirects = 5,
-          sslContext: SSLContext = defaultSSLContext,
+          sslContext: SSLContext = getDefaultSSL(),
           timeout = -1, userAgent = defUserAgent,
           proxy: Proxy = nil): Response {.deprecated.} =
   ## | GETs the ``url`` and returns a ``Response`` object
@@ -627,18 +619,18 @@ proc get*(url: string, extraHeaders = "", maxRedirects = 5,
   ## server takes longer than specified an ETimeout exception will be raised.
   ##
   ## **Deprecated since version 0.15.0**: use ``HttpClient.get`` instead.
-  result = request(url, httpGET, extraHeaders, "", sslContext, timeout,
+  result = request(url, HttpGET, extraHeaders, "", sslContext, timeout,
                    userAgent, proxy)
   var lastURL = url
   for i in 1..maxRedirects:
     if result.status.redirection():
       let redirectTo = getNewLocation(lastURL, result.headers)
-      result = request(redirectTo, httpGET, extraHeaders, "", sslContext,
+      result = request(redirectTo, HttpGET, extraHeaders, "", sslContext,
                        timeout, userAgent, proxy)
       lastURL = redirectTo
 
 proc getContent*(url: string, extraHeaders = "", maxRedirects = 5,
-                 sslContext: SSLContext = defaultSSLContext,
+                 sslContext: SSLContext = getDefaultSSL(),
                  timeout = -1, userAgent = defUserAgent,
                  proxy: Proxy = nil): string {.deprecated.} =
   ## | GETs the body and returns it as a string.
@@ -657,7 +649,7 @@ proc getContent*(url: string, extraHeaders = "", maxRedirects = 5,
 
 proc post*(url: string, extraHeaders = "", body = "",
            maxRedirects = 5,
-           sslContext: SSLContext = defaultSSLContext,
+           sslContext: SSLContext = getDefaultSSL(),
            timeout = -1, userAgent = defUserAgent,
            proxy: Proxy = nil,
            multipart: MultipartData = nil): Response {.deprecated.} =
@@ -687,20 +679,20 @@ proc post*(url: string, extraHeaders = "", body = "",
   if not multipart.isNil:
     xh.add(withNewLine("Content-Type: " & mpContentType))
 
-  result = request(url, httpPOST, xh, xb, sslContext, timeout, userAgent,
+  result = request(url, HttpPOST, xh, xb, sslContext, timeout, userAgent,
                    proxy)
   var lastURL = url
   for i in 1..maxRedirects:
     if result.status.redirection():
       let redirectTo = getNewLocation(lastURL, result.headers)
-      var meth = if result.status != "307": httpGet else: httpPost
+      var meth = if result.status != "307": HttpGet else: HttpPost
       result = request(redirectTo, meth, xh, xb, sslContext, timeout,
                        userAgent, proxy)
       lastURL = redirectTo
 
 proc postContent*(url: string, extraHeaders = "", body = "",
                   maxRedirects = 5,
-                  sslContext: SSLContext = defaultSSLContext,
+                  sslContext: SSLContext = getDefaultSSL(),
                   timeout = -1, userAgent = defUserAgent,
                   proxy: Proxy = nil,
                   multipart: MultipartData = nil): string
@@ -723,7 +715,7 @@ proc postContent*(url: string, extraHeaders = "", body = "",
     return r.body
 
 proc downloadFile*(url: string, outputFilename: string,
-                   sslContext: SSLContext = defaultSSLContext,
+                   sslContext: SSLContext = getDefaultSSL(),
                    timeout = -1, userAgent = defUserAgent,
                    proxy: Proxy = nil) {.deprecated.} =
   ## | Downloads ``url`` and saves it to ``outputFilename``
@@ -815,6 +807,7 @@ type
     lastProgressReport: float
     when SocketType is AsyncSocket:
       bodyStream: FutureStream[string]
+      parseBodyFut: Future[void]
     else:
       bodyStream: Stream
     getBody: bool ## When `false`, the body is never read in requestAux.
@@ -823,7 +816,7 @@ type
   HttpClient* = HttpClientBase[Socket]
 
 proc newHttpClient*(userAgent = defUserAgent,
-    maxRedirects = 5, sslContext = defaultSslContext, proxy: Proxy = nil,
+    maxRedirects = 5, sslContext = getDefaultSSL(), proxy: Proxy = nil,
     timeout = -1): HttpClient =
   ## Creates a new HttpClient instance.
   ##
@@ -850,7 +843,7 @@ proc newHttpClient*(userAgent = defUserAgent,
   result.bodyStream = newStringStream()
   result.getBody = true
   when defined(ssl):
-    result.sslContext = contextOrDefault(sslContext)
+    result.sslContext = sslContext
 
 type
   AsyncHttpClient* = HttpClientBase[AsyncSocket]
@@ -858,7 +851,7 @@ type
 {.deprecated: [PAsyncHttpClient: AsyncHttpClient].}
 
 proc newAsyncHttpClient*(userAgent = defUserAgent,
-    maxRedirects = 5, sslContext = defaultSslContext,
+    maxRedirects = 5, sslContext = getDefaultSSL(),
     proxy: Proxy = nil): AsyncHttpClient =
   ## Creates a new AsyncHttpClient instance.
   ##
@@ -882,7 +875,7 @@ proc newAsyncHttpClient*(userAgent = defUserAgent,
   result.bodyStream = newFutureStream[string]("newAsyncHttpClient")
   result.getBody = true
   when defined(ssl):
-    result.sslContext = contextOrDefault(sslContext)
+    result.sslContext = sslContext
 
 proc close*(client: HttpClient | AsyncHttpClient) =
   ## Closes any connections held by the HTTP client.
@@ -1074,10 +1067,14 @@ proc parseResponse(client: HttpClient | AsyncHttpClient,
   if getBody:
     when client is HttpClient:
       client.bodyStream = newStringStream()
+      result.bodyStream = client.bodyStream
+      parseBody(client, result.headers, result.version)
     else:
       client.bodyStream = newFutureStream[string]("parseResponse")
-    await parseBody(client, result.headers, result.version)
-    result.bodyStream = client.bodyStream
+      result.bodyStream = client.bodyStream
+      assert(client.parseBodyFut.isNil or client.parseBodyFut.finished)
+      client.parseBodyFut = parseBody(client, result.headers, result.version)
+        # do not wait here for the body request to complete
 
 proc newConnection(client: HttpClient | AsyncHttpClient,
                    url: Uri) {.multisync.} =
@@ -1167,6 +1164,12 @@ proc requestAux(client: HttpClient | AsyncHttpClient, url: string,
   # Helper that actually makes the request. Does not handle redirects.
   let requestUrl = parseUri(url)
 
+  when client is AsyncHttpClient:
+    if not client.parseBodyFut.isNil:
+      # let the current operation finish before making another request
+      await client.parseBodyFut
+      client.parseBodyFut = nil
+
   await newConnection(client, requestUrl)
 
   let effectiveHeaders = client.headers.override(headers)
@@ -1192,7 +1195,7 @@ proc request*(client: HttpClient | AsyncHttpClient, url: string,
   ## Connects to the hostname specified by the URL and performs a request
   ## using the custom method string specified by ``httpMethod``.
   ##
-  ## Connection will kept alive. Further requests on the same ``client`` to
+  ## Connection will be kept alive. Further requests on the same ``client`` to
   ## the same hostname will not require a new connection to be made. The
   ## connection can be closed by using the ``close`` procedure.
   ##

@@ -45,8 +45,6 @@ type
   SqlLexer* = object of BaseLexer ## the parser object.
     filename: string
 
-{.deprecated: [TToken: Token, TSqlLexer: SqlLexer].}
-
 const
   tokKindToStr: array[TokKind, string] = [
     "invalid", "[EOF]", "identifier", "quoted identifier", "string constant",
@@ -595,7 +593,6 @@ proc len*(n: SqlNode): int =
 proc `[]`*(n: SqlNode; i: int): SqlNode = n.sons[i]
 
 proc add*(father, n: SqlNode) =
-  if isNil(father.sons): father.sons = @[]
   add(father.sons, n)
 
 proc getTok(p: var SqlParser) =

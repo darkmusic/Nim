@@ -31,8 +31,6 @@ type
 
   JSRef = ref RootObj # Fake type.
 
-{.deprecated: [TSafePoint: SafePoint, TCallFrame: CallFrame].}
-
 var
   framePtr {.importc, nodecl, volatile.}: PCallFrame
   excHandler {.importc, nodecl, volatile.}: int = 0
@@ -110,7 +108,7 @@ proc getStackTrace*(e: ref Exception): string = e.trace
 proc unhandledException(e: ref Exception) {.
     compilerproc, asmNoStackFrame.} =
   var buf = ""
-  if e.msg != nil and e.msg[0] != '\0':
+  if e.msg.len != 0:
     add(buf, "Error: unhandled exception: ")
     add(buf, e.msg)
   else:
@@ -184,12 +182,10 @@ proc setConstr() {.varargs, asmNoStackFrame, compilerproc.} =
 proc makeNimstrLit(c: cstring): string {.asmNoStackFrame, compilerproc.} =
   {.emit: """
   var ln = `c`.length;
-  var result = new Array(ln + 1);
-  var i = 0;
-  for (; i < ln; ++i) {
+  var result = new Array(ln);
+  for (var i = 0; i < ln; ++i) {
     result[i] = `c`.charCodeAt(i);
   }
-  result[i] = 0; // terminating zero
   return result;
   """.}
 
@@ -227,13 +223,12 @@ proc cstrToNimstr(c: cstring): string {.asmNoStackFrame, compilerproc.} =
     }
     ++r;
   }
-  result[r] = 0; // terminating zero
   return result;
   """.}
 
 proc toJSStr(s: string): cstring {.asmNoStackFrame, compilerproc.} =
   asm """
-  var len = `s`.length-1;
+  var len = `s`.length;
   var asciiPart = new Array(len);
   var fcc = String.fromCharCode;
   var nonAsciiPart = null;
@@ -264,10 +259,7 @@ proc toJSStr(s: string): cstring {.asmNoStackFrame, compilerproc.} =
 
 proc mnewString(len: int): string {.asmNoStackFrame, compilerproc.} =
   asm """
-    var result = new Array(`len`+1);
-    result[0] = 0;
-    result[`len`] = 0;
-    return result;
+    return new Array(`len`);
   """
 
 proc SetCard(a: int): int {.compilerproc, asmNoStackFrame.} =
@@ -325,14 +317,14 @@ proc cmpStrings(a, b: string): int {.asmNoStackFrame, compilerProc.} =
     if (`a` == `b`) return 0;
     if (!`a`) return -1;
     if (!`b`) return 1;
-    for (var i = 0; i < `a`.length - 1 && i < `b`.length - 1; i++) {
+    for (var i = 0; i < `a`.length && i < `b`.length; i++) {
       var result = `a`[i] - `b`[i];
       if (result != 0) return result;
     }
     return `a`.length - `b`.length;
   """
 
-proc cmp(x, y: string): int = 
+proc cmp(x, y: string): int =
   return cmpStrings(x, y)
 
 proc eqStrings(a, b: string): bool {.asmNoStackFrame, compilerProc.} =
@@ -506,7 +498,6 @@ proc chckNilDisp(p: pointer) {.compilerproc.} =
   if p == nil:
     sysFatal(NilAccessError, "cannot dispatch; dispatcher is nil")
 
-type NimString = string # hack for hti.nim
 include "system/hti"
 
 proc isFatPointer(ti: PNimType): bool =
@@ -654,9 +645,7 @@ proc isObj(obj, subclass: PNimType): bool {.compilerproc.} =
   return true
 
 proc addChar(x: string, c: char) {.compilerproc, asmNoStackFrame.} =
-  asm """
-    `x`[`x`.length-1] = `c`; `x`.push(0);
-  """
+  asm "`x`.push(`c`);"
 
 {.pop.}
 
@@ -750,3 +739,16 @@ when defined(nodejs):
 else:
   # Deprecated. Use `alert` defined in dom.nim
   proc alert*(s: cstring) {.importc, nodecl, deprecated.}
+
+# Workaround for IE, IE up to version 11 lacks 'Math.trunc'. We produce
+# 'Math.trunc' for Nim's ``div`` and ``mod`` operators:
+when not defined(nodejs):
+  {.emit: """
+  if (!Math.trunc) {
+    Math.trunc = function(v) {
+      v = +v;
+      if (!isFinite(v)) return v;
+
+      return (v - v % 1)   ||   (v < 0 ? -0 : v === 0 ? v : 0);
+    };
+  }""".}
