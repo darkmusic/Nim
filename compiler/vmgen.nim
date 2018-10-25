@@ -29,7 +29,7 @@
 
 import
   strutils, ast, astalgo, types, msgs, renderer, vmdef,
-  trees, intsets, magicsys, options, lowerings, lineinfos
+  trees, intsets, magicsys, options, lowerings, lineinfos, transf
 import platform
 from os import splitFile
 
@@ -1080,8 +1080,6 @@ proc genMagic(c: PCtx; n: PNode; dest: var TDest; m: TMagic) =
     c.gABC(n, if m == mOf: opcOf else: opcIs, dest, tmp, idx)
     c.freeTemp(tmp)
     c.freeTemp(idx)
-  of mSizeOf:
-    globalError(c.config, n.info, "cannot run in the VM: " & renderTree(n))
   of mHigh:
     if dest < 0: dest = c.getTemp(n.typ)
     let tmp = c.genx(n.sons[1])
@@ -1124,6 +1122,7 @@ proc genMagic(c: PCtx; n: PNode; dest: var TDest; m: TMagic) =
   of mStaticExec: genBinaryABCD(c, n, dest, opcGorge)
   of mNLen: genUnaryABI(c, n, dest, opcLenSeq, nimNodeFlag)
   of mGetImpl: genUnaryABC(c, n, dest, opcGetImpl)
+  of mGetImplTransf: genUnaryABC(c, n, dest, opcGetImplTransf)
   of mSymOwner: genUnaryABC(c, n, dest, opcSymOwner)
   of mNChild: genBinaryABC(c, n, dest, opcNChild)
   of mNSetChild: genVoidABC(c, n, dest, opcNSetChild)
@@ -1231,6 +1230,8 @@ proc genMagic(c: PCtx; n: PNode; dest: var TDest; m: TMagic) =
       # produces a value
     else:
       globalError(c.config, n.info, "expandToAst requires a call expression")
+  of mSizeOf, mAlignOf:
+    globalError(c.config, n.info, "cannot evaluate 'sizeof/alignof' because its type is not defined completely")
   of mRunnableExamples:
     discard "just ignore any call to runnableExamples"
   else:
@@ -2129,7 +2130,7 @@ proc genProc(c: PCtx; s: PSym): int =
     s.ast.sons[miscPos] = x
     # thanks to the jmp we can add top level statements easily and also nest
     # procs easily:
-    let body = s.getBody
+    let body = transformBody(c.graph, s, cache = not isCompileTimeProc(s))
     let procStart = c.xjmp(body, opcJmp, 0)
     var p = PProc(blocks: @[], sym: s)
     let oldPrc = c.prc

@@ -86,7 +86,7 @@ proc callCompiler(cmdTemplate, filename, options: string,
   let c = parseCmdLine(cmdTemplate % ["target", targetToCmd[target],
                        "options", options, "file", filename.quoteShell,
                        "filedir", filename.getFileDir()])
-  var p = startProcess(command=c[0], args=c[1.. ^1],
+  var p = startProcess(command=c[0], args=c[1 .. ^1],
                        options={poStdErrToStdOut, poUsePath})
   let outp = p.outputStream
   var suc = ""
@@ -313,7 +313,9 @@ proc testSpec(r: var TResults, test: TTest, target = targetC) =
     inc(r.total)
     return
 
-  if expected.targets == {}:
+  if getEnv("NIM_COMPILE_TO_CPP", "false").string == "true" and target == targetC and expected.targets == {}:
+    expected.targets.incl(targetCpp)
+  elif expected.targets == {}:
     expected.targets.incl(target)
 
   for target in expected.targets:
@@ -467,7 +469,7 @@ proc main() =
     of "targets":
       targetsStr = p.val.string
       targets = parseTargets(targetsStr)
-    of "nim": compilerPrefix = p.val.string
+    of "nim": compilerPrefix = p.val.string & " "
     else: quit Usage
     p.next()
   if p.kind != cmdArgument: quit Usage

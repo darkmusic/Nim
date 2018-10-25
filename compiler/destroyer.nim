@@ -216,6 +216,7 @@ proc isLastRead(n: PNode; c: var Con): bool =
   let s = n.sym
   var pcs: seq[int] = @[instr+1]
   var takenGotos: IntSet
+  var takenForks = initIntSet()
   while pcs.len > 0:
     var pc = pcs.pop
 
@@ -251,7 +252,7 @@ proc isLastRead(n: PNode; c: var Con): bool =
           inc pc
       of fork:
         # we follow the next instruction but push the dest onto our "work" stack:
-        if not takenGotos.containsOrIncl(pc):
+        if not takenForks.containsOrIncl(pc):
           pcs.add pc + c.g[pc].dest
         inc pc
   #echo c.graph.config $ n.info, " last read here!"
@@ -267,9 +268,6 @@ proc patchHead(n: PNode) =
       if sfFromGeneric in s.flags:
         excl(s.flags, sfFromGeneric)
         patchHead(s.getBody)
-      if n[1].typ.isNil:
-        # XXX toptree crashes without this workaround. Figure out why.
-        return
       let t = n[1].typ.skipTypes({tyVar, tyLent, tyGenericInst, tyAlias, tySink, tyInferred})
       template patch(op, field) =
         if s.name.s == op and field != nil and field != s:
@@ -295,6 +293,10 @@ proc checkForErrorPragma(c: Con; t: PType; ri: PNode; opname: string) =
       m.add c.graph.config $ c.otherRead.info
   localError(c.graph.config, ri.info, errGenerated, m)
 
+proc makePtrType(c: Con, baseType: PType): PType =
+  result = newType(tyPtr, c.owner)
+  addSonSkipIntLit(result, baseType)
+
 template genOp(opr, opname, ri) =
   let op = opr
   if op == nil:
@@ -303,7 +305,9 @@ template genOp(opr, opname, ri) =
     globalError(c.graph.config, dest.info, "internal error: '" & opname & "' operator is generic")
   patchHead op
   if sfError in op.flags: checkForErrorPragma(c, t, ri, opname)
-  result = newTree(nkCall, newSymNode(op), newTree(nkHiddenAddr, dest))
+  let addrExp = newNodeIT(nkHiddenAddr, dest.info, makePtrType(c, dest.typ))
+  addrExp.add(dest)
+  result = newTree(nkCall, newSymNode(op), addrExp)
 
 proc genSink(c: Con; t: PType; dest, ri: PNode): PNode =
   let t = t.skipTypes({tyGenericInst, tyAlias, tySink})

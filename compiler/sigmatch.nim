@@ -728,7 +728,7 @@ proc matchUserTypeClass*(m: var TCandidate; ff, a: PType): PType =
                       else:
                         makeTypeDesc(c, typ)
 
-        typeParams.safeAdd((param, typ))
+        typeParams.add((param, typ))
 
       addDecl(c, param)
 
@@ -757,7 +757,7 @@ proc matchUserTypeClass*(m: var TCandidate; ff, a: PType): PType =
   if collectDiagnostics:
     m.c.config.writelnHook = oldWriteHook
     for msg in diagnostics:
-      m.diagnostics.safeAdd msg
+      m.diagnostics.add msg
       m.diagnosticsEnabled = true
 
   if checkedBody == nil: return nil
@@ -1027,7 +1027,7 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
 
       result = typeRel(c, aOrig.base, candidate)
       if result != isNone:
-        c.inferredTypes.safeAdd aOrig
+        c.inferredTypes.add aOrig
         aOrig.sons.add candidate
         result = isEqual
       return
@@ -1727,7 +1727,7 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
     else:
       result = typeRel(c, f.base, a)
       if result != isNone:
-        c.inferredTypes.safeAdd f
+        c.inferredTypes.add f
         f.sons.add a
 
   of tyTypeDesc:
@@ -1826,8 +1826,11 @@ proc userConvMatch(c: PContext, m: var TCandidate, f, a: PType,
     let srca = typeRel(m, src, a)
     if srca notin {isEqual, isGeneric, isSubtype}: continue
 
+    # What's done below matches the logic in ``matchesAux``
     let constraint = c.converters[i].typ.n[1].sym.constraint
     if not constraint.isNil and not matchNodeKinds(constraint, arg):
+      continue
+    if src.kind in {tyVar, tyLent} and not arg.isLValue:
       continue
 
     let destIsGeneric = containsGenericType(dest)
@@ -1841,9 +1844,16 @@ proc userConvMatch(c: PContext, m: var TCandidate, f, a: PType,
       s.info = arg.info
       result = newNodeIT(nkHiddenCallConv, arg.info, dest)
       addSon(result, s)
+      # We build the call expression by ourselves in order to avoid passing this
+      # expression trough the semantic check phase once again so let's make sure
+      # it is correct
       var param: PNode = nil
       if srca == isSubtype:
         param = implicitConv(nkHiddenSubConv, src, copyTree(arg), m, c)
+      elif src.kind == tyVar:
+        # Analyse the converter return type
+        param = newNodeIT(nkHiddenAddr, arg.info, s.typ[1])
+        param.addSon(copyTree(arg))
       else:
         param = copyTree(arg)
       addSon(result, param)
@@ -2612,4 +2622,3 @@ tests:
 
     yes int, ordinal
     no  string, ordinal
-

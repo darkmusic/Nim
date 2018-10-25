@@ -1,6 +1,7 @@
 discard """
   errormsg: "'=' is not available for type <Foo>; requires a copy because it's not the last read of 'otherTree'"
-  line: 44
+  file: "tprevent_assign2.nim"
+  line: 48
 """
 
 type
@@ -19,18 +20,21 @@ proc take2(a, b: sink Foo) =
 
 proc allowThis() =
   var otherTree: Foo
-  for i in 0..3:
-    while true:
-      #if i == 0:
-      otherTree = createTree(44)
-      case i
-      of 0:
-        echo otherTree
-        take2(createTree(34), otherTree)
-      of 1:
-        take2(createTree(34), otherTree)
-      else:
-        discard
+  try:
+    for i in 0..3:
+      while true:
+        #if i == 0:
+        otherTree = createTree(44)
+        case i
+        of 0:
+          echo otherTree
+          take2(createTree(34), otherTree)
+        of 1:
+          take2(createTree(34), otherTree)
+        else:
+          discard
+  finally:
+    discard
 
 proc preventThis() =
   var otherTree: Foo
@@ -46,3 +50,6 @@ proc preventThis() =
         take2(createTree(34), otherTree)
       else:
         discard
+
+allowThis()
+preventThis()

@@ -54,9 +54,11 @@ proc needsRecompile(g: ModuleGraph; fileIdx: FileIndex; fullpath: AbsoluteFile;
 
 proc getModuleId*(g: ModuleGraph; fileIdx: FileIndex; fullpath: AbsoluteFile): int =
   ## Analyse the known dependency graph.
-  if g.config.symbolFiles in {disabledSf, writeOnlySf} or
-     g.incr.configChanged:
-    return getID()
+  if g.config.symbolFiles == disabledSf: return getID()
+  when false:
+    if g.config.symbolFiles in {disabledSf, writeOnlySf} or
+      g.incr.configChanged:
+      return getID()
   let module = g.incr.db.getRow(
     sql"select id, fullHash, nimid from modules where fullpath = ?", string fullpath)
   let currentFullhash = hashFileCached(g.config, fileIdx, fullpath)
@@ -70,7 +72,7 @@ proc getModuleId*(g: ModuleGraph; fileIdx: FileIndex; fullpath: AbsoluteFile): i
       # not changed, so use the cached AST:
       doAssert(result != 0)
       var cycleCheck = initIntSet()
-      if not needsRecompile(g, fileIdx, fullpath, cycleCheck):
+      if not needsRecompile(g, fileIdx, fullpath, cycleCheck) and not g.incr.configChanged:
         echo "cached successfully! ", string fullpath
         return -result
     db.exec(sql"update modules set fullHash = ? where id = ?", currentFullhash, module[0])
@@ -616,7 +618,7 @@ proc loadType(g; id: int; info: TLineInfo): PType =
     doAssert b.s[b.pos] == '\20'
     inc(b.pos)
     let y = loadSym(g, decodeVInt(b.s, b.pos), info)
-    result.methods.safeAdd((x, y))
+    result.methods.add((x, y))
   decodeLoc(g, b, result.loc, info)
   while b.s[b.pos] == '^':
     inc(b.pos)
@@ -656,7 +658,7 @@ proc decodeInstantiations(g; b; info: TLineInfo;
     if b.s[b.pos] == '\20':
       inc(b.pos)
       ii.compilesId = decodeVInt(b.s, b.pos)
-    s.safeAdd ii
+    s.add ii
 
 proc loadSymFromBlob(g; b; info: TLineInfo): PSym =
   if b.s[b.pos] == '{':
@@ -717,7 +719,7 @@ proc loadSymFromBlob(g; b; info: TLineInfo): PSym =
   of skType, skGenericParam:
     while b.s[b.pos] == '\14':
       inc(b.pos)
-      result.typeInstCache.safeAdd loadType(g, decodeVInt(b.s, b.pos), result.info)
+      result.typeInstCache.add loadType(g, decodeVInt(b.s, b.pos), result.info)
   of routineKinds:
     decodeInstantiations(g, b, result.info, result.procInstCache)
     if b.s[b.pos] == '\16':
@@ -853,12 +855,10 @@ proc loadNode*(g: ModuleGraph; module: PSym): PNode =
   result = newNodeI(nkStmtList, module.info)
   for row in db.rows(sql"select data from toplevelstmts where module = ? order by position asc",
                         abs module.id):
-
     var b = BlobReader(pos: 0)
     # ensure we can read without index checks:
     b.s = row[0] & '\0'
     result.add decodeNode(g, b, module.info)
-
   db.exec(sql"insert into controlblock(idgen) values (?)", gFrontEndId)
   replay(g, module, result)
 

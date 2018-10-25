@@ -180,6 +180,15 @@ else:
     ## Cannot be overloaded.
     discard
 
+when defined(nimHasTypeof):
+  type
+    TypeOfMode* = enum ## Possible modes of `typeof`.
+      typeOfProc,      ## Prefer the interpretation that means `x` is a proc call.
+      typeOfIter       ## Prefer the interpretation that means `x` is an iterator call.
+  proc typeof*(x: untyped; mode = typeOfIter): typeDesc {.magic: "TypeOf", noSideEffect, compileTime.} =
+    ## Builtin 'typeof' operation for accessing the type of an expression. Since version 0.20.0.
+    discard
+
 proc `not`*(x: bool): bool {.magic: "Not", noSideEffect.}
   ## Boolean not; returns true iff ``x == false``.
 
@@ -682,12 +691,29 @@ proc sizeof*[T](x: T): int {.magic: "SizeOf", noSideEffect.}
   ## that one never needs to know ``x``'s size. As a special semantic rule,
   ## ``x`` may also be a type identifier (``sizeof(int)`` is valid).
   ##
-  ## Limitations: If used within nim VM context ``sizeof`` will only work
-  ## for simple types.
+  ## Limitations: If used for types that are imported from C or C++,
+  ## sizeof should fallback to the ``sizeof`` in the C compiler. The
+  ## result isn't available for the Nim compiler and therefore can't
+  ## be used inside of macros.
   ##
   ## .. code-block:: nim
   ##  sizeof('A') #=> 1
   ##  sizeof(2) #=> 8
+
+when defined(nimHasalignOf):
+  proc alignof*[T](x: T): int {.magic: "AlignOf", noSideEffect.}
+  proc alignof*(x: typedesc): int {.magic: "AlignOf", noSideEffect.}
+
+  proc offsetOfDotExpr(typeAccess: typed): int {.magic: "OffsetOf", noSideEffect, compileTime.}
+
+  template offsetOf*[T](t: typedesc[T]; member: untyped): int =
+    var tmp: T
+    offsetOfDotExpr(tmp.member)
+
+  template offsetOf*[T](value: T; member: untyped): int =
+    offsetOfDotExpr(value.member)
+
+  #proc offsetOf*(memberaccess: typed): int {.magic: "OffsetOf", noSideEffect.}
 
 when defined(nimtypedescfixed):
   proc sizeof*(x: typedesc): int {.magic: "SizeOf", noSideEffect.}
@@ -1760,26 +1786,26 @@ type # these work for most platforms:
 proc toFloat*(i: int): float {.
   magic: "ToFloat", noSideEffect, importc: "toFloat".}
   ## converts an integer `i` into a ``float``. If the conversion
-  ## fails, `EInvalidValue` is raised. However, on most platforms the
+  ## fails, `ValueError` is raised. However, on most platforms the
   ## conversion cannot fail.
 
 proc toBiggestFloat*(i: BiggestInt): BiggestFloat {.
   magic: "ToBiggestFloat", noSideEffect, importc: "toBiggestFloat".}
   ## converts an biggestint `i` into a ``biggestfloat``. If the conversion
-  ## fails, `EInvalidValue` is raised. However, on most platforms the
+  ## fails, `ValueError` is raised. However, on most platforms the
   ## conversion cannot fail.
 
 proc toInt*(f: float): int {.
   magic: "ToInt", noSideEffect, importc: "toInt".}
   ## converts a floating point number `f` into an ``int``. Conversion
   ## rounds `f` if it does not contain an integer value. If the conversion
-  ## fails (because `f` is infinite for example), `EInvalidValue` is raised.
+  ## fails (because `f` is infinite for example), `ValueError` is raised.
 
 proc toBiggestInt*(f: BiggestFloat): BiggestInt {.
   magic: "ToBiggestInt", noSideEffect, importc: "toBiggestInt".}
   ## converts a biggestfloat `f` into a ``biggestint``. Conversion
   ## rounds `f` if it does not contain an integer value. If the conversion
-  ## fails (because `f` is infinite for example), `EInvalidValue` is raised.
+  ## fails (because `f` is infinite for example), `ValueError` is raised.
 
 proc addQuitProc*(QuitProc: proc() {.noconv.}) {.
   importc: "atexit", header: "<stdlib.h>".}
@@ -1998,9 +2024,12 @@ proc `$`*[Enum: enum](x: Enum): string {.magic: "EnumToStr", noSideEffect.}
   ## used instead. (In other words: *Overwriting* is possible.)
 
 # undocumented:
-proc getRefcount*[T](x: ref T): int {.importc: "getRefcount", noSideEffect.}
-proc getRefcount*(x: string): int {.importc: "getRefcount", noSideEffect.}
-proc getRefcount*[T](x: seq[T]): int {.importc: "getRefcount", noSideEffect.}
+proc getRefcount*[T](x: ref T): int {.importc: "getRefcount", noSideEffect,
+  deprecated: "the refcount never was reliable, the GC does not use traditional refcounting".}
+proc getRefcount*(x: string): int {.importc: "getRefcount", noSideEffect,
+  deprecated: "the refcount never was reliable, the GC does not use traditional refcounting".}
+proc getRefcount*[T](x: seq[T]): int {.importc: "getRefcount", noSideEffect,
+  deprecated: "the refcount never was reliable, the GC does not use traditional refcounting".}
   ## retrieves the reference count of an heap-allocated object. The
   ## value is implementation-dependent.
 
@@ -2115,7 +2144,7 @@ when defined(nimNewRoof):
   template dotdotImpl(t) {.dirty.} =
     iterator `..`*(a, b: t): t {.inline.} =
       ## A type specialized version of ``..`` for convenience so that
-      ## mixing integer types work better.
+      ## mixing integer types works better.
       var res = a
       while res <= b:
         yield res
@@ -3446,7 +3475,7 @@ when not defined(JS): #and not defined(nimscript):
     iterator lines*(filename: string): TaintedString {.tags: [ReadIOEffect].} =
       ## Iterates over any line in the file named `filename`.
       ##
-      ## If the file does not exist `EIO` is raised. The trailing newline
+      ## If the file does not exist `IOError` is raised. The trailing newline
       ## character(s) are removed from the iterated lines. Example:
       ##
       ## .. code-block:: nim
@@ -3880,7 +3909,7 @@ proc failedAssertImpl*(msg: string) {.raises: [], tags: [].} =
 
 include "system/helpers" # for `lineInfoToString`
 
-template assertImpl(cond: bool, msg = "", enabled: static[bool]) =
+template assertImpl(cond: bool, msg: string, expr: string, enabled: static[bool]) =
   const loc = $instantiationInfo(-1, true)
   bind instantiationInfo
   mixin failedAssertImpl
@@ -3889,9 +3918,9 @@ template assertImpl(cond: bool, msg = "", enabled: static[bool]) =
     # here, regardless of --excessiveStackTrace
     {.line: instantiationInfo(fullPaths = true).}:
       if not cond:
-        failedAssertImpl(loc & " `" & astToStr(cond) & "` " & msg)
+        failedAssertImpl(loc & " `" & expr & "` " & msg)
 
-template assert*(cond: bool, msg = "") =
+template assert*(cond: untyped, msg = "") =
   ## Raises ``AssertionError`` with `msg` if `cond` is false. Note
   ## that ``AssertionError`` is hidden from the effect system, so it doesn't
   ## produce ``{.raises: [AssertionError].}``. This exception is only supposed
@@ -3900,11 +3929,13 @@ template assert*(cond: bool, msg = "") =
   ## The compiler may not generate any code at all for ``assert`` if it is
   ## advised to do so through the ``-d:release`` or ``--assertions:off``
   ## `command line switches <nimc.html#command-line-switches>`_.
-  assertImpl(cond, msg, compileOption("assertions"))
+  const expr = astToStr(cond)
+  assertImpl(cond, msg, expr, compileOption("assertions"))
 
-template doAssert*(cond: bool, msg = "") =
+template doAssert*(cond: untyped, msg = "") =
   ## same as ``assert`` but is always turned on regardless of ``--assertions``
-  assertImpl(cond, msg, true)
+  const expr = astToStr(cond)
+  assertImpl(cond, msg, expr, true)
 
 iterator items*[T](a: seq[T]): T {.inline.} =
   ## iterates over each item of `a`.

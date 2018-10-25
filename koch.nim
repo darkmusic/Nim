@@ -272,7 +272,8 @@ proc boot(args: string) =
   var output = "compiler" / "nim".exe
   var finalDest = "bin" / "nim".exe
   # default to use the 'c' command:
-  let bootOptions = if args.len == 0 or args.startsWith("-"): "c" else: ""
+  let defaultCommand = if getEnv("NIM_COMPILE_TO_CPP", "false") == "true": "cpp" else: "c"
+  let bootOptions = if args.len == 0 or args.startsWith("-"): defaultCommand else: ""
   let smartNimcache = (if "release" in args: "nimcache/r_" else: "nimcache/d_") &
                       hostOs & "_" & hostCpu
 
@@ -406,13 +407,14 @@ proc temp(args: string) =
       result[1].add " " & quoteShell(args[i])
       inc i
 
-  var output = "compiler" / "nim".exe
-  var finalDest = "bin" / "nim_temp".exe
+  let d = getAppDir()
+  var output = d / "compiler" / "nim".exe
+  var finalDest = d / "bin" / "nim_temp".exe
   # 125 is the magic number to tell git bisect to skip the current
   # commit.
   let (bootArgs, programArgs) = splitArgs(args)
   let nimexec = findNim()
-  exec(nimexec & " c -d:debug --debugger:native " & bootArgs & " compiler" / "nim", 125)
+  exec(nimexec & " c -d:debug --debugger:native " & bootArgs & " " & (d / "compiler" / "nim"), 125)
   copyExe(output, finalDest)
   if programArgs.len > 0: exec(finalDest & " " & programArgs)
 
