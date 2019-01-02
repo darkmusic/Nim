@@ -528,7 +528,7 @@ proc typeToString(typ: PType, prefer: TPreferedDesc = preferName): string =
       result = "array[" & typeToString(t.sons[0]) & ", " &
           typeToString(t.sons[1]) & ']'
   of tyUncheckedArray:
-    result = "uncheckedArray[" & typeToString(t.sons[0]) & ']'
+    result = "UncheckedArray[" & typeToString(t.sons[0]) & ']'
   of tySequence:
     result = "seq[" & typeToString(t.sons[0]) & ']'
   of tyOpt:
@@ -1086,8 +1086,8 @@ proc inheritanceDiff*(a, b: PType): int =
   # | returns: +x iff `a` is the x'th direct subclass of `b`
   # | returns: `maxint` iff `a` and `b` are not compatible at all
   if a == b or a.kind == tyError or b.kind == tyError: return 0
-  assert a.kind == tyObject
-  assert b.kind == tyObject
+  assert a.kind in {tyObject} + skipPtrs
+  assert b.kind in {tyObject} + skipPtrs
   var x = a
   result = 0
   while x != nil:

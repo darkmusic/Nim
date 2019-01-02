@@ -9,8 +9,11 @@
 
 import
   intsets, ast, astalgo, msgs, renderer, magicsys, types, idents, trees,
-  wordrecg, strutils, options, guards, writetracking, lineinfos, semfold,
+  wordrecg, strutils, options, guards, lineinfos, semfold,
   modulegraphs
+
+when not defined(leanCompiler):
+  import writetracking
 
 when defined(useDfa):
   import dfa
@@ -53,6 +56,7 @@ type
     guards: TModel # nested guards
     locked: seq[PNode] # locked locations
     gcUnsafe, isRecursive, isToplevel, hasSideEffect, inEnforcedGcSafe: bool
+    inEnforcedNoSideEffects: bool
     maxLockLevel, currLockLevel: TLockLevel
     config: ConfigRef
     graph: ModuleGraph
@@ -191,10 +195,10 @@ proc markGcUnsafe(a: PEffects; reason: PNode) =
 
 when true:
   template markSideEffect(a: PEffects; reason: typed) =
-    a.hasSideEffect = true
+    if not a.inEnforcedNoSideEffects: a.hasSideEffect = true
 else:
   template markSideEffect(a: PEffects; reason: typed) =
-    a.hasSideEffect = true
+    if not a.inEnforcedNoSideEffects: a.hasSideEffect = true
     markGcUnsafe(a, reason)
 
 proc listGcUnsafety(s: PSym; onlyWarning: bool; cycleCheck: var IntSet; conf: ConfigRef) =
@@ -713,7 +717,7 @@ proc track(tracked: PEffects, n: PNode) =
       track(tracked, n.sons[i])
   of nkCallKinds:
     if getConstExpr(tracked.owner_module, n, tracked.graph) != nil:
-      return 
+      return
     # p's effects are ours too:
     var a = n.sons[0]
     let op = a.typ
@@ -843,15 +847,20 @@ proc track(tracked: PEffects, n: PNode) =
     let oldLocked = tracked.locked.len
     let oldLockLevel = tracked.currLockLevel
     var enforcedGcSafety = false
+    var enforceNoSideEffects = false
     for i in 0 ..< pragmaList.len:
       let pragma = whichPragma(pragmaList.sons[i])
       if pragma == wLocks:
         lockLocations(tracked, pragmaList.sons[i])
       elif pragma == wGcSafe:
         enforcedGcSafety = true
+      elif pragma == wNosideeffect:
+        enforceNoSideEffects = true
     if enforcedGcSafety: tracked.inEnforcedGcSafe = true
+    if enforceNoSideEffects: tracked.inEnforcedNoSideEffects = true
     track(tracked, n.lastSon)
     if enforcedGcSafety: tracked.inEnforcedGcSafe = false
+    if enforceNoSideEffects: tracked.inEnforcedNoSideEffects = false
     setLen(tracked.locked, oldLocked)
     tracked.currLockLevel = oldLockLevel
   of nkTypeSection, nkProcDef, nkConverterDef, nkMethodDef, nkIteratorDef,

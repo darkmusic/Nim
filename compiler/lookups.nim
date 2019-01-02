@@ -89,7 +89,7 @@ proc skipAlias*(s: PSym; n: PNode; conf: ConfigRef): PSym =
       prettybase.replaceDeprecated(conf, n.info, s, result)
     else:
       message(conf, n.info, warnDeprecated, "use " & result.name.s & " instead; " &
-              s.name.s)
+              s.name.s & " is deprecated")
 
 proc localSearchInScope*(c: PContext, s: PIdent): PSym =
   result = strTableGet(c.currentScope.symbols, s)
@@ -168,13 +168,13 @@ proc ensureNoMissingOrUnusedSymbols(c: PContext; scope: PScope) =
         localError(c.config, s.info, "implementation of '$1' expected" %
             getSymRepr(c.config, s))
       inc missingImpls
-    elif {sfUsed, sfExported} * s.flags == {} and optHints in s.options:
-      if s.kind notin {skForVar, skParam, skMethod, skUnknown, skGenericParam}:
+    elif {sfUsed, sfExported} * s.flags == {}:
+      if s.kind notin {skForVar, skParam, skMethod, skUnknown, skGenericParam, skEnumField}:
         # XXX: implicit type params are currently skTypes
         # maybe they can be made skGenericParam as well.
         if s.typ != nil and tfImplicitTypeParam notin s.typ.flags and
            s.typ.kind != tyGenericParam:
-          message(c.config, s.info, hintXDeclaredButNotUsed, getSymRepr(c.config, s))
+          message(c.config, s.info, hintXDeclaredButNotUsed, s.name.s)
     s = nextIter(it, scope.symbols)
 
 proc wrongRedefinition*(c: PContext; info: TLineInfo, s: string;

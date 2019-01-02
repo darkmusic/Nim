@@ -147,9 +147,16 @@ String handling
 * `subexes <subexes.html>`_
   This module implements advanced string substitution operations.
 
-* `editdistance <editdistance>`_
+* `std/editdistance <editdistance.html>`_
   This module contains an algorithm to compute the edit distance between two
   Unicode strings.
+
+* `std/wordwrap <wordwrap.html>`_
+  This module contains an algorithm to wordwrap a Unicode string.
+
+* `experimental/diff <diff.html>`_
+  This module contains an algorithm to compute the famous "diff"
+  of two texts by line.
 
 
 Generic Operating System Services

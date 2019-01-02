@@ -17,11 +17,13 @@ else:
 
 proc test(infile, ext: string) =
   if execShellCmd("$# -o:$# --backup:off $#" % [nimp, infile.changeFileExt(ext), infile]) != 0:
-    quit("FAILURE")
+    echo "FAILURE: nimpretty cannot prettify ", infile
+    failures += 1
+    return
   let nimFile = splitFile(infile).name
   let expected = dir / "expected" / nimFile & ".nim"
   let produced = dir / nimFile.changeFileExt(ext)
-  if strip(readFile(expected)) != strip(readFile(produced)):
+  if readFile(expected) != readFile(produced):
     echo "FAILURE: files differ: ", nimFile
     discard execShellCmd("diff -uNdr " & expected & " " & produced)
     failures += 1

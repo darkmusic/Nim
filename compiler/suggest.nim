@@ -115,7 +115,7 @@ proc symToSuggest(conf: ConfigRef; s: PSym, isLocal: bool, section: IdeCmd, info
       result.forth = typeToString(s.typ)
     else:
       result.forth = ""
-    when defined(nimsuggest) and not defined(noDocgen):
+    when defined(nimsuggest) and not defined(noDocgen) and not defined(leanCompiler):
       result.doc = s.extractDocComment
   let infox = if section in {ideUse, ideHighlight, ideOutline}: info else: s.info
   result.filePath = toFullPath(conf, infox)
@@ -153,7 +153,7 @@ proc `$`*(suggest: Suggest): string =
     result.add(sep)
     result.add($suggest.column)
     result.add(sep)
-    when defined(nimsuggest) and not defined(noDocgen):
+    when defined(nimsuggest) and not defined(noDocgen) and not defined(leanCompiler):
       result.add(suggest.doc.escape)
     if suggest.version == 0:
       result.add(sep)
@@ -462,14 +462,17 @@ proc extractPragma(s: PSym): PNode =
   doAssert result == nil or result.kind == nkPragma
 
 proc warnAboutDeprecated(conf: ConfigRef; info: TLineInfo; s: PSym) =
-  let pragmaNode = extractPragma(s)
+  let pragmaNode = if s.kind == skEnumField: extractPragma(s.owner) else: extractPragma(s)
+  let name =
+    if s.kind == skEnumField and sfDeprecated notin s.flags: "enum '" & s.owner.name.s & "' which contains field '" & s.name.s & "'"
+    else: s.name.s
   if pragmaNode != nil:
     for it in pragmaNode:
       if whichPragma(it) == wDeprecated and it.safeLen == 2 and
           it[1].kind in {nkStrLit..nkTripleStrLit}:
-        message(conf, info, warnDeprecated, it[1].strVal & "; " & s.name.s)
+        message(conf, info, warnDeprecated, it[1].strVal & "; " & name & " is deprecated")
         return
-  message(conf, info, warnDeprecated, s.name.s)
+  message(conf, info, warnDeprecated, name & " is deprecated")
 
 proc userError(conf: ConfigRef; info: TLineInfo; s: PSym) =
   let pragmaNode = extractPragma(s)
@@ -486,6 +489,8 @@ proc markUsed(conf: ConfigRef; info: TLineInfo; s: PSym; usageSym: var PSym) =
   incl(s.flags, sfUsed)
   if s.kind == skEnumField and s.owner != nil:
     incl(s.owner.flags, sfUsed)
+    if sfDeprecated in s.owner.flags:
+      warnAboutDeprecated(conf, info, s)
   if {sfDeprecated, sfError} * s.flags != {}:
     if sfDeprecated in s.flags: warnAboutDeprecated(conf, info, s)
     if sfError in s.flags: userError(conf, info, s)
