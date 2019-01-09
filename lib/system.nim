@@ -106,8 +106,6 @@ type
   SomeNumber* = SomeInteger|SomeFloat
     ## type class matching all number types
 
-{.deprecated: [SomeReal: SomeFloat].}
-
 proc defined*(x: untyped): bool {.magic: "Defined", noSideEffect, compileTime.}
   ## Special compile-time procedure that checks whether `x` is
   ## defined.
@@ -119,6 +117,22 @@ proc defined*(x: untyped): bool {.magic: "Defined", noSideEffect, compileTime.}
   ##   when not defined(release):
   ##     # Do here programmer friendly expensive sanity checks.
   ##   # Put here the normal code
+
+when defined(nimHasRunnableExamples):
+  proc runnableExamples*(body: untyped) {.magic: "RunnableExamples".}
+    ## A section you should use to mark `runnable example`:idx: code with.
+    ##
+    ## - In normal debug and release builds code within
+    ##   a ``runnableExamples`` section is ignored.
+    ## - The documentation generator is aware of these examples and considers them
+    ##   part of the ``##`` doc comment. As the last step of documentation
+    ##   generation the examples are put into an ``$file_example.nim`` file,
+    ##   compiled and tested. The collected examples are
+    ##   put into their own module to ensure the examples do not refer to
+    ##   non-exported symbols.
+else:
+  template runnableExamples*(body: untyped) =
+    discard
 
 proc declared*(x: untyped): bool {.magic: "Defined", noSideEffect, compileTime.}
   ## Special compile-time procedure that checks whether `x` is
@@ -202,23 +216,6 @@ proc `or`*(x, y: bool): bool {.magic: "Or", noSideEffect.}
   ## ``y`` will not even be evaluated.
 proc `xor`*(x, y: bool): bool {.magic: "Xor", noSideEffect.}
   ## Boolean `exclusive or`; returns true iff ``x != y``.
-
-proc new*[T](a: var ref T) {.magic: "New", noSideEffect.}
-  ## creates a new object of type ``T`` and returns a safe (traced)
-  ## reference to it in ``a``.
-
-proc new*(T: typedesc): auto =
-  ## creates a new object of type ``T`` and returns a safe (traced)
-  ## reference to it as result value.
-  ##
-  ## When ``T`` is a ref type then the resulting type will be ``T``,
-  ## otherwise it will be ``ref T``.
-  when (T is ref):
-    var r: T
-  else:
-    var r: ref T
-  new(r)
-  return r
 
 const ThisIsSystem = true
 
@@ -392,7 +389,7 @@ when defined(nimArrIdx):
     x: S) {.noSideEffect, magic: "ArrPut".}
 
   when defined(nimNewRuntime):
-    proc `=destroy`*[T](x: var T) {.inline, magic: "Asgn".} =
+    proc `=destroy`*[T](x: var T) {.inline, magic: "Destroy".} =
       ## generic `destructor`:idx: implementation that can be overriden.
       discard
     proc `=sink`*[T](x: var T; y: T) {.inline, magic: "Asgn".} =
@@ -572,7 +569,7 @@ type
       trace: string
     else:
       trace: seq[StackTraceEntry]
-    raise_id: uint # set when exception is raised
+    raiseId: uint # set when exception is raised
     up: ref Exception # used for stacking exceptions. Not exported!
 
   Defect* = object of Exception ## \
@@ -1001,10 +998,13 @@ proc `div`*(x, y: int32): int32 {.magic: "DivI", noSideEffect.}
   ## ``trunc(x/y)``.
   ##
   ## .. code-block:: Nim
-  ##   1 div 2 == 0
-  ##   2 div 2 == 1
-  ##   3 div 2 == 1
-  ##   7 div 5 == 1
+  ##   ( 1 div  2) ==  0
+  ##   ( 2 div  2) ==  1
+  ##   ( 3 div  2) ==  1
+  ##   ( 7 div  3) ==  2
+  ##   (-7 div  3) == -2
+  ##   ( 7 div -3) == -2
+  ##   (-7 div -3) ==  2
 
 when defined(nimnomagic64):
   proc `div`*(x, y: int64): int64 {.magic: "DivI", noSideEffect.}
@@ -1020,7 +1020,10 @@ proc `mod`*(x, y: int32): int32 {.magic: "ModI", noSideEffect.}
   ## ``x - (x div y) * y``.
   ##
   ## .. code-block:: Nim
-  ##   (7 mod 5) == 2
+  ##   ( 7 mod  5) ==  2
+  ##   (-7 mod  5) == -2
+  ##   ( 7 mod -5) ==  2
+  ##   (-7 mod -5) == -2
 
 when defined(nimnomagic64):
   proc `mod`*(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
@@ -1325,6 +1328,23 @@ proc `is`*[T, S](x: T, y: S): bool {.magic: "Is", noSideEffect.}
 template `isnot`*(x, y: untyped): untyped = not (x is y)
   ## Negated version of `is`. Equivalent to ``not(x is y)``.
 
+proc new*[T](a: var ref T) {.magic: "New", noSideEffect.}
+  ## creates a new object of type ``T`` and returns a safe (traced)
+  ## reference to it in ``a``.
+
+proc new*(t: typedesc): auto =
+  ## creates a new object of type ``T`` and returns a safe (traced)
+  ## reference to it as result value.
+  ##
+  ## When ``T`` is a ref type then the resulting type will be ``T``,
+  ## otherwise it will be ``ref T``.
+  when (t is ref):
+    var r: t
+  else:
+    var r: ref t
+  new(r)
+  return r
+
 proc `of`*[T, S](x: typeDesc[T], y: typeDesc[S]): bool {.magic: "Of", noSideEffect.}
 proc `of`*[T, S](x: T, y: typeDesc[S]): bool {.magic: "Of", noSideEffect.}
 proc `of`*[T, S](x: T, y: S): bool {.magic: "Of", noSideEffect.}
@@ -1475,12 +1495,9 @@ const
   # for string literals, it allows for some optimizations.
 
 {.push profiler: off.}
-when defined(nimKnowsNimvm):
-  let nimvm* {.magic: "Nimvm".}: bool = false
-    ## may be used only in "when" expression.
-    ## It is true in Nim VM context and false otherwise
-else:
-  const nimvm*: bool = false
+let nimvm* {.magic: "Nimvm", compileTime.}: bool = false
+  ## may be used only in "when" expression.
+  ## It is true in Nim VM context and false otherwise
 {.pop.}
 
 proc compileOption*(option: string): bool {.
@@ -1535,7 +1552,7 @@ else:
                                         ## ``string`` if the taint mode is not
                                         ## turned on.
 
-when defined(profiler):
+when defined(profiler) and not defined(nimscript):
   proc nimProfile() {.compilerProc, noinline.}
 when hasThreadSupport:
   {.pragma: rtlThreadVar, threadvar.}
@@ -1551,7 +1568,7 @@ const
     ## is the value that should be passed to `quit <#quit>`_ to indicate
     ## failure.
 
-when defined(nodejs):
+when defined(nodejs) and not defined(nimscript):
   var programResult* {.importc: "process.exitCode".}: int
   programResult = 0
 else:
@@ -1597,7 +1614,7 @@ elif defined(genode):
 
 
 
-elif defined(nodejs):
+elif defined(nodejs) and not defined(nimscript):
   proc quit*(errorcode: int = QuitSuccess) {.magic: "Exit",
     importc: "process.exit", noreturn.}
 
@@ -1688,7 +1705,7 @@ proc insert*[T](x: var seq[T], item: T, i = 0.Natural) {.noSideEffect.} =
   else:
     when defined(js):
       var it : T
-      {.emit: "`x`.splice(`i`, 0, `it`);".}
+      {.emit: "`x` = `x` || []; `x`.splice(`i`, 0, `it`);".}
     else:
       defaultImpl()
   x[i] = item
@@ -1791,30 +1808,35 @@ proc toFloat*(i: int): float {.
 
 proc toBiggestFloat*(i: BiggestInt): BiggestFloat {.
   magic: "ToBiggestFloat", noSideEffect, importc: "toBiggestFloat".}
-  ## converts an biggestint `i` into a ``biggestfloat``. If the conversion
+  ## converts a biggestint `i` into a ``biggestfloat``. If the conversion
   ## fails, `ValueError` is raised. However, on most platforms the
   ## conversion cannot fail.
 
 proc toInt*(f: float): int {.
-  magic: "ToInt", noSideEffect, importc: "toInt".}
+  magic: "ToInt", noSideEffect, importc: "toInt".} =
   ## converts a floating point number `f` into an ``int``. Conversion
-  ## rounds `f` if it does not contain an integer value. If the conversion
-  ## fails (because `f` is infinite for example), `ValueError` is raised.
+  ## rounds `f` half away from 0, see https://en.wikipedia.org/wiki/Rounding#Round_half_away_from_zero
+  ## Note that some floating point numbers (e.g. infinity or even 1e19)
+  ## cannot be accurately converted.
+  runnableExamples:
+    doAssert toInt(0.49) == 0
+    doAssert toInt(0.5) == 1
+    doAssert toInt(-0.5) == -1 ## rounding is symmetrical
 
 proc toBiggestInt*(f: BiggestFloat): BiggestInt {.
-  magic: "ToBiggestInt", noSideEffect, importc: "toBiggestInt".}
-  ## converts a biggestfloat `f` into a ``biggestint``. Conversion
-  ## rounds `f` if it does not contain an integer value. If the conversion
-  ## fails (because `f` is infinite for example), `ValueError` is raised.
+  magic: "ToBiggestInt", noSideEffect, importc: "toBiggestInt".} =
+  ## Same as `toInt` but for BiggestFloat to ``BiggestInt``.
+  runnableExamples:
+    doAssert toBiggestInt(0.49) == 0
 
-proc addQuitProc*(QuitProc: proc() {.noconv.}) {.
+proc addQuitProc*(quitProc: proc() {.noconv.}) {.
   importc: "atexit", header: "<stdlib.h>".}
   ## Adds/registers a quit procedure.
   ##
   ## Each call to ``addQuitProc`` registers another quit procedure. Up to 30
   ## procedures can be registered. They are executed on a last-in, first-out
   ## basis (that is, the last function registered is the first to be executed).
-  ## ``addQuitProc`` raises an EOutOfIndex exception if ``QuitProc`` cannot be
+  ## ``addQuitProc`` raises an EOutOfIndex exception if ``quitProc`` cannot be
   ## registered.
 
 # Support for addQuitProc() is done by Ansi C's facilities here.
@@ -2035,11 +2057,11 @@ proc getRefcount*[T](x: seq[T]): int {.importc: "getRefcount", noSideEffect,
 
 
 const
-  Inf* {.magic: "Inf".} = 1.0 / 0.0
+  Inf* = 0x7FF0000000000000'f64
     ## contains the IEEE floating point value of positive infinity.
-  NegInf* {.magic: "NegInf".} = -Inf
+  NegInf* = 0xFFF0000000000000'f64
     ## contains the IEEE floating point value of negative infinity.
-  NaN* {.magic: "NaN".} = 0.0 / 0.0
+  NaN* = 0x7FF7FFFFFFFFFFFF'f64
     ## contains an IEEE floating point value of *Not A Number*. Note
     ## that you cannot compare a floating point value to this value
     ## and expect a reasonable result - use the `classify` procedure
@@ -2050,7 +2072,7 @@ const
   NimMinor* {.intdefine.}: int = 19
     ## is the minor number of Nim's version.
 
-  NimPatch* {.intdefine.}: int = 1
+  NimPatch* {.intdefine.}: int = 9
     ## is the patch number of Nim's version.
 
   NimVersion*: string = $NimMajor & "." & $NimMinor & "." & $NimPatch
@@ -2083,6 +2105,8 @@ when not defined(nimscript) and hasAlloc:
     proc getTotalSharedMem*(): int {.rtl.}
       ## returns the number of bytes on the shared heap that are owned by the
       ## process. This is only available when threads are enabled.
+
+proc `|`*(a, b: typedesc): typedesc = discard
 
 when sizeof(int) <= 2:
   type IntLikeForCount = int|int8|int16|char|bool|uint8|enum
@@ -2186,10 +2210,14 @@ else:
         inc(res)
 
 
-iterator `||`*[S, T](a: S, b: T, annotation=""): T {.
+iterator `||`*[S, T](a: S, b: T, annotation: static string = "parallel for"): T {.
   inline, magic: "OmpParFor", sideEffect.} =
-  ## parallel loop iterator. Same as `..` but the loop may run in parallel.
+  ## OpenMP parallel loop iterator. Same as `..` but the loop may run in parallel.
   ## `annotation` is an additional annotation for the code generator to use.
+  ## The default annotation is `parallel for`.
+  ## Please refer to the `OpenMP Syntax Reference<https://www.openmp.org/wp-content/uploads/OpenMP-4.5-1115-CPP-web.pdf>`_
+  ## for further information.
+  ##
   ## Note that the compiler maps that to
   ## the ``#pragma omp parallel for`` construct of `OpenMP`:idx: and as
   ## such isn't aware of the parallelism in your code! Be careful! Later
@@ -2241,10 +2269,10 @@ proc min*(x, y: float): float {.magic: "MinF64", noSideEffect.} =
 proc max*(x, y: float): float {.magic: "MaxF64", noSideEffect.} =
   if y <= x: x else: y
 
-proc min*[T](x, y: T): T =
+proc min*[T](x, y: T): T {.inline.}=
   if x <= y: x else: y
 
-proc max*[T](x, y: T): T =
+proc max*[T](x, y: T): T {.inline.}=
   if y <= x: x else: y
 {.pop.}
 
@@ -2512,12 +2540,13 @@ proc `==`*[T](x, y: seq[T]): bool {.noSideEffect.} =
     when not defined(JS):
       proc seqToPtr[T](x: seq[T]): pointer {.inline, nosideeffect.} =
         result = cast[pointer](x)
-    else:
-      proc seqToPtr[T](x: seq[T]): pointer {.asmNoStackFrame, nosideeffect.} =
-        asm """return `x`"""
 
-    if seqToPtr(x) == seqToPtr(y):
-      return true
+      if seqToPtr(x) == seqToPtr(y):
+        return true
+    else:
+      var sameObject = false
+      asm """`sameObject` = `x` === `y`"""
+      if sameObject: return true
 
   when not defined(nimNoNil):
     if x.isNil or y.isNil:
@@ -2613,8 +2642,8 @@ proc `==`*[T: tuple|object](x, y: T): bool =
   return true
 
 proc `<=`*[T: tuple](x, y: T): bool =
-  ## generic ``<=`` operator for tuples that is lifted from the components
-  ## of `x` and `y`. This implementation uses `cmp`.
+  ## generic lexicographic ``<=`` operator for tuples that is lifted from the
+  ## components of `x` and `y`. This implementation uses `cmp`.
   for a, b in fields(x, y):
     var c = cmp(a, b)
     if c < 0: return true
@@ -2622,13 +2651,25 @@ proc `<=`*[T: tuple](x, y: T): bool =
   return true
 
 proc `<`*[T: tuple](x, y: T): bool =
-  ## generic ``<`` operator for tuples that is lifted from the components
-  ## of `x` and `y`. This implementation uses `cmp`.
+  ## generic lexicographic ``<`` operator for tuples that is lifted from the
+  ## components of `x` and `y`. This implementation uses `cmp`.
   for a, b in fields(x, y):
     var c = cmp(a, b)
     if c < 0: return true
     if c > 0: return false
   return false
+
+proc compiles*(x: untyped): bool {.magic: "Compiles", noSideEffect, compileTime.} =
+  ## Special compile-time procedure that checks whether `x` can be compiled
+  ## without any semantic error.
+  ## This can be used to check whether a type supports some operation:
+  ##
+  ## .. code-block:: Nim
+  ##   when compiles(3 + 4):
+  ##     echo "'+' for integers is available"
+  discard
+
+include "system/helpers" # for `lineInfoToString`, `isNamedTuple`
 
 proc `$`*[T: tuple|object](x: T): string =
   ## generic ``$`` operator for tuples that is lifted from the components
@@ -2636,13 +2677,20 @@ proc `$`*[T: tuple|object](x: T): string =
   ##
   ## .. code-block:: nim
   ##   $(23, 45) == "(23, 45)"
+  ##   $(a: 23, b: 45) == "(a: 23, b: 45)"
   ##   $() == "()"
   result = "("
   var firstElement = true
+  const isNamed = T is object or isNamedTuple(T)
+  when not isNamed:
+    var count = 0
   for name, value in fieldPairs(x):
     if not firstElement: result.add(", ")
-    result.add(name)
-    result.add(": ")
+    when isNamed:
+      result.add(name)
+      result.add(": ")
+    else:
+      count.inc
     when compiles($value):
       when value isnot string and value isnot seq and compiles(value.isNil):
         if value.isNil: result.add "nil"
@@ -2652,6 +2700,10 @@ proc `$`*[T: tuple|object](x: T): string =
       firstElement = false
     else:
       result.add("...")
+  when not isNamed:
+    if count == 1:
+      result.add(",") # $(1,) should print as the semantically legal (1,)
+
   result.add(")")
 
 proc collectionToString[T](x: T, prefix, separator, suffix: string): string =
@@ -2689,6 +2741,16 @@ proc `$`*[T](x: seq[T]): string =
   ## .. code-block:: nim
   ##   $(@[23, 45]) == "@[23, 45]"
   collectionToString(x, "@[", ", ", "]")
+
+proc `$`*[T, U](x: HSlice[T, U]): string =
+  ## generic ``$`` operator for slices that is lifted from the components
+  ## of `x`. Example:
+  ##
+  ## .. code-block:: nim
+  ##  $(1 .. 5) == "1 .. 5"
+  result = $x.a
+  result.add(" .. ")
+  result.add($x.b)
 
 # ----------------- GC interface ---------------------------------------------
 
@@ -2739,8 +2801,8 @@ when not defined(nimscript) and hasAlloc:
 
     when not defined(JS) and not defined(nimscript) and hasAlloc:
       proc nimGC_setStackBottom*(theStackBottom: pointer) {.compilerRtl, noinline, benign.}
-      ## Expands operating GC stack range to `theStackBottom`. Does nothing
-      ## if current stack bottom is already lower than `theStackBottom`.
+        ## Expands operating GC stack range to `theStackBottom`. Does nothing
+        ## if current stack bottom is already lower than `theStackBottom`.
 
   else:
     template GC_disable* =
@@ -2972,7 +3034,7 @@ when defined(nimnomagic64):
     ## returns the absolute value of `x`. If `x` is ``low(x)`` (that
     ## is -MININT for its type), an overflow exception is thrown (if overflow
     ## checking is turned on).
-    if x < 0: -x else: x
+    result = if x < 0: -x else: x
 else:
   proc abs*(x: int64): int64 {.magic: "AbsI64", noSideEffect.} =
     ## returns the absolute value of `x`. If `x` is ``low(x)`` (that
@@ -2982,8 +3044,8 @@ else:
 {.pop.}
 
 when not defined(JS):
-  proc likely_proc(val: bool): bool {.importc: "likely", nodecl, nosideeffect.}
-  proc unlikely_proc(val: bool): bool {.importc: "unlikely", nodecl, nosideeffect.}
+  proc likelyProc(val: bool): bool {.importc: "likely", nodecl, nosideeffect.}
+  proc unlikelyProc(val: bool): bool {.importc: "unlikely", nodecl, nosideeffect.}
 
 template likely*(val: bool): bool =
   ## Hints the optimizer that `val` is likely going to be true.
@@ -3007,7 +3069,7 @@ template likely*(val: bool): bool =
     when defined(JS):
       val
     else:
-      likely_proc(val)
+      likelyProc(val)
 
 template unlikely*(val: bool): bool =
   ## Hints the optimizer that `val` is likely going to be false.
@@ -3031,7 +3093,7 @@ template unlikely*(val: bool): bool =
     when defined(JS):
       val
     else:
-      unlikely_proc(val)
+      unlikelyProc(val)
 
 type
   FileSeekPos* = enum ## Position relative to which seek should happen
@@ -3054,7 +3116,7 @@ when not defined(JS): #and not defined(nimscript):
     proc initStackBottom() {.inline, compilerproc.} =
       # WARNING: This is very fragile! An array size of 8 does not work on my
       # Linux 64bit system. -- That's because the stack direction is the other
-      # way round.
+      # way around.
       when declared(nimGC_setStackBottom):
         var locals {.volatile.}: pointer
         locals = addr(locals)
@@ -3126,7 +3188,7 @@ when not defined(JS): #and not defined(nimscript):
         result = x.len - y.len
 
   when defined(nimscript):
-    proc readFile*(filename: string): string {.tags: [ReadIOEffect], benign.}
+    proc readFile*(filename: string): TaintedString {.tags: [ReadIOEffect], benign.}
       ## Opens a file named `filename` for reading, calls `readAll
       ## <#readAll>`_ and closes the file afterwards. Returns the string.
       ## Raises an IO exception in case of an error. If # you need to call
@@ -3410,6 +3472,10 @@ when not defined(JS): #and not defined(nimscript):
     when defined(memtracker):
       include "system/memtracker"
 
+    when defined(gcDestructors):
+      include "core/strs"
+      include "core/seqs"
+
     when hostOS == "standalone":
       include "system/embedded"
     else:
@@ -3440,6 +3506,7 @@ when not defined(JS): #and not defined(nimscript):
       of 1: d = ze(cast[ptr int8](a +% n.offset)[])
       of 2: d = ze(cast[ptr int16](a +% n.offset)[])
       of 4: d = int(cast[ptr int32](a +% n.offset)[])
+      of 8: d = int(cast[ptr int64](a +% n.offset)[])
       else: sysAssert(false, "getDiscriminant: invalid n.typ.size")
       return d
 
@@ -3457,10 +3524,7 @@ when not defined(JS): #and not defined(nimscript):
     {.pop.}
     {.push stack_trace: off, profiler:off.}
     when hasAlloc:
-      when defined(gcDestructors):
-        include "core/strs"
-        include "core/seqs"
-      else:
+      when not defined(gcDestructors):
         include "system/sysstr"
     {.pop.}
     when hasAlloc: include "system/strmantle"
@@ -3546,7 +3610,7 @@ when not defined(JS): #and not defined(nimscript):
   when defined(endb) and not defined(nimscript):
     include "system/debugger"
 
-  when defined(profiler) or defined(memProfiler):
+  when (defined(profiler) or defined(memProfiler)) and not defined(nimscript):
     include "system/profiler"
   {.pop.} # stacktrace
 
@@ -3587,7 +3651,7 @@ elif defined(JS):
   proc deallocShared(p: pointer) = discard
   proc reallocShared(p: pointer, newsize: Natural): pointer = discard
 
-  when defined(JS):
+  when defined(JS) and not defined(nimscript):
     include "system/jssys"
     include "system/reprjs"
   elif defined(nimscript):
@@ -3897,7 +3961,7 @@ proc instantiationInfo*(index = -1, fullPaths = false): tuple[
 template currentSourcePath*: string = instantiationInfo(-1, true).filename
   ## returns the full file-system path of the current source
 
-proc raiseAssert*(msg: string) {.noinline.} =
+proc raiseAssert*(msg: string) {.noinline, noReturn.} =
   sysFatal(AssertionError, msg)
 
 proc failedAssertImpl*(msg: string) {.raises: [], tags: [].} =
@@ -3906,8 +3970,6 @@ proc failedAssertImpl*(msg: string) {.raises: [], tags: [].} =
   type Hide = proc (msg: string) {.noinline, raises: [], noSideEffect,
                                     tags: [].}
   Hide(raiseAssert)(msg)
-
-include "system/helpers" # for `lineInfoToString`
 
 template assertImpl(cond: bool, msg: string, expr: string, enabled: static[bool]) =
   const loc = $instantiationInfo(-1, true)
@@ -3997,6 +4059,7 @@ proc shallow*[T](s: var seq[T]) {.noSideEffect, inline.} =
   ## marks a sequence `s` as `shallow`:idx:. Subsequent assignments will not
   ## perform deep copies of `s`. This is only useful for optimization
   ## purposes.
+  if s.len == 0: return
   when not defined(JS) and not defined(nimscript):
     var s = cast[PGenericSeq](s)
     s.reserved = s.reserved or seqShallowFlag
@@ -4007,6 +4070,8 @@ proc shallow*(s: var string) {.noSideEffect, inline.} =
   ## purposes.
   when not defined(JS) and not defined(nimscript) and not defined(gcDestructors):
     var s = cast[PGenericSeq](s)
+    if s == nil:
+      s = cast[PGenericSeq](newString(0))
     # string literals cannot become 'shallow':
     if (s.reserved and strlitFlag) == 0:
       s.reserved = s.reserved or seqShallowFlag
@@ -4016,8 +4081,6 @@ type
 
   NimNode* {.magic: "PNimrodNode".} = ref NimNodeObj
     ## represents a Nim AST node. Macros operate on this type.
-
-{.deprecated: [PNimrodNode: NimNode].}
 
 when false:
   template eval*(blk: typed): typed =
@@ -4040,16 +4103,6 @@ when hasAlloc:
     while j < item.len:
       x[j+i] = item[j]
       inc(j)
-
-proc compiles*(x: untyped): bool {.magic: "Compiles", noSideEffect, compileTime.} =
-  ## Special compile-time procedure that checks whether `x` can be compiled
-  ## without any semantic error.
-  ## This can be used to check whether a type supports some operation:
-  ##
-  ## .. code-block:: Nim
-  ##   when compiles(3 + 4):
-  ##     echo "'+' for integers is available"
-  discard
 
 when declared(initDebugger):
   initDebugger()
@@ -4198,6 +4251,10 @@ when hasAlloc and not defined(nimscript) and not defined(JS) and
     ## for the implementation of ``spawn``.
     discard
 
+  proc deepCopy*[T](y: T): T =
+    ## Convenience wrapper around `deepCopy` overload.
+    deepCopy(result, y)
+
   include "system/deepcopy"
 
 proc procCall*(x: untyped) {.magic: "ProcCall", compileTime.} =
@@ -4309,24 +4366,7 @@ when defined(windows) and appType == "console" and defined(nimSetUtf8CodePage):
     importc: "SetConsoleOutputCP".}
   discard setConsoleOutputCP(65001) # 65001 - utf-8 codepage
 
-
-when defined(nimHasRunnableExamples):
-  proc runnableExamples*(body: untyped) {.magic: "RunnableExamples".}
-    ## A section you should use to mark `runnable example`:idx: code with.
-    ##
-    ## - In normal debug and release builds code within
-    ##   a ``runnableExamples`` section is ignored.
-    ## - The documentation generator is aware of these examples and considers them
-    ##   part of the ``##`` doc comment. As the last step of documentation
-    ##   generation the examples are put into an ``$file_example.nim`` file,
-    ##   compiled and tested. The collected examples are
-    ##   put into their own module to ensure the examples do not refer to
-    ##   non-exported symbols.
-else:
-  template runnableExamples*(body: untyped) =
-    discard
-
-template doAssertRaises*(exception, code: untyped): typed =
+template doAssertRaises*(exception: typedesc, code: untyped): typed =
   ## Raises ``AssertionError`` if specified ``code`` does not raise the
   ## specified exception. Example:
   ##
@@ -4334,16 +4374,24 @@ template doAssertRaises*(exception, code: untyped): typed =
   ##  doAssertRaises(ValueError):
   ##    raise newException(ValueError, "Hello World")
   var wrong = false
-  try:
-    if true:
-      code
-    wrong = true
-  except exception:
-    discard
-  except Exception as exc:
-    raiseAssert(astToStr(exception) &
-                " wasn't raised, another error was raised instead by:\n"&
-                astToStr(code))
+  when Exception is exception:
+    try:
+      if true:
+        code
+      wrong = true
+    except Exception:
+      discard
+  else:
+    try:
+      if true:
+        code
+      wrong = true
+    except exception:
+      discard
+    except Exception as exc:
+      raiseAssert(astToStr(exception) &
+                  " wasn't raised, another error was raised instead by:\n"&
+                  astToStr(code))
   if wrong:
     raiseAssert(astToStr(exception) & " wasn't raised by:\n" & astToStr(code))
 
@@ -4403,3 +4451,12 @@ when defined(genode):
       componentConstructHook(env)
         # Perform application initialization
         # and return to thread entrypoint.
+
+proc `$`*(t: typedesc): string {.magic: "TypeTrait".} =
+  ## Returns the name of the given type.
+  ##
+  ## For more procedures dealing with ``typedesc``, see ``typetraits.nim``.
+  runnableExamples:
+    doAssert $(type(42)) == "int"
+    doAssert $(type("Foo")) == "string"
+    static: doAssert $(type(@['A', 'B'])) == "seq[char]"

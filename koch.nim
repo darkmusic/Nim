@@ -26,6 +26,7 @@ import
 import tools / kochdocs
 
 const VersionAsString = system.NimVersion
+const env_NIM_COMPILE_TO_CPP = "NIM_COMPILE_TO_CPP"
 
 const
   HelpText = """
@@ -51,8 +52,12 @@ Boot options:
   -d:release               produce a release version of the compiler
   -d:useLinenoise          use the linenoise library for interactive mode
                            (not needed on Windows)
+  -d:leanCompiler          produce a compiler without JS codegen or
+                           documentation generator in order to use less RAM
+                           for bootstrapping
 
 Commands for core developers:
+  runCI                    runs continuous integration (CI), eg from travis
   docs [options]           generates the full documentation
   csource -d:release       builds the C sources for installation
   pdf                      builds the PDF documentation
@@ -75,6 +80,9 @@ template withDir(dir, body) =
     body
   finally:
     setCurrentdir(old)
+
+let origDir = getCurrentDir()
+setCurrentDir(getAppDir())
 
 proc tryExec(cmd: string): bool =
   echo(cmd)
@@ -112,10 +120,11 @@ proc bundleNimbleSrc(latest: bool) =
 
 proc bundleNimbleExe(latest: bool) =
   bundleNimbleSrc(latest)
-  # now compile Nimble and copy it to $nim/bin for the installer.ini
-  # to pick it up:
-  nimexec("c -d:release --nilseqs:on dist/nimble/src/nimble.nim")
-  copyExe("dist/nimble/src/nimble".exe, "bin/nimble".exe)
+  # installer.ini expects it under $nim/bin
+  nimCompile("dist/nimble/src/nimble.nim", options = "-d:release --nilseqs:on")
+
+proc buildNimfind() =
+  nimCompile("tools/nimfind.nim", options = "-d:release")
 
 proc buildNimble(latest: bool) =
   # old installations created nim/nimblepkg/*.nim files. We remove these
@@ -141,33 +150,28 @@ proc buildNimble(latest: bool) =
       else:
         exec("git checkout -f stable")
       exec("git pull")
-  nimexec("c --noNimblePath -p:compiler --nilseqs:on -d:release " & installDir / "src/nimble.nim")
-  copyExe(installDir / "src/nimble".exe, "bin/nimble".exe)
+  nimCompile(installDir / "src/nimble.nim", options = "--noNimblePath --nilseqs:on -d:release")
 
-proc bundleNimsuggest(buildExe: bool) =
-  if buildExe:
-    nimexec("c --noNimblePath -d:release -p:compiler nimsuggest/nimsuggest.nim")
-    copyExe("nimsuggest/nimsuggest".exe, "bin/nimsuggest".exe)
-    removeFile("nimsuggest/nimsuggest".exe)
+proc bundleNimsuggest() =
+  nimCompile("nimsuggest/nimsuggest.nim", options = "-d:release")
 
 proc buildVccTool() =
-  nimexec("c -o:bin/vccexe.exe tools/vccenv/vccexe")
+  nimCompile("tools/vccexe/vccexe.nim")
 
 proc bundleWinTools() =
-  nimexec("c tools/finish.nim")
-  copyExe("tools/finish".exe, "finish".exe)
-  removeFile("tools/finish".exe)
+  # TODO: consider building under `bin` instead of `.`
+  nimCompile("tools/finish.nim", outputDir = "")
+
   buildVccTool()
-  nimexec("c -o:bin/nimgrab.exe -d:ssl tools/nimgrab.nim")
-  nimexec("c -o:bin/nimgrep.exe tools/nimgrep.nim")
+  nimCompile("tools/nimgrab.nim", options = "-d:ssl")
+  nimCompile("tools/nimgrep.nim")
   when false:
     # not yet a tool worth including
-    nimexec(r"c --cc:vcc --app:gui -o:bin\downloader.exe -d:ssl --noNimblePath " &
-            r"--path:..\ui tools\downloader.nim")
+    nimCompile(r"tools\downloader.nim", options = r"--cc:vcc --app:gui -d:ssl --noNimblePath --path:..\ui")
 
 proc zip(latest: bool; args: string) =
   bundleNimbleExe(latest)
-  bundleNimsuggest(true)
+  bundleNimsuggest()
   bundleWinTools()
   nimexec("cc -r $2 --var:version=$1 --var:mingw=none --main:compiler/nim.nim scripts compiler/installer.ini" %
        [VersionAsString, compileNimInst])
@@ -184,7 +188,8 @@ proc ensureCleanGit() =
 proc xz(latest: bool; args: string) =
   ensureCleanGit()
   bundleNimbleSrc(latest)
-  bundleNimsuggest(false)
+  when false:
+    bundleNimsuggest()
   nimexec("cc -r $2 --var:version=$1 --var:mingw=none --main:compiler/nim.nim scripts compiler/installer.ini" %
        [VersionAsString, compileNimInst])
   exec("$# --var:version=$# --var:mingw=none --main:compiler/nim.nim xz compiler/installer.ini" %
@@ -195,19 +200,16 @@ proc buildTool(toolname, args: string) =
   copyFile(dest="bin" / splitFile(toolname).name.exe, source=toolname.exe)
 
 proc buildTools(latest: bool) =
-  nimexec "c --noNimblePath -p:compiler -d:release -o:" & ("bin/nimsuggest".exe) &
-      " nimsuggest/nimsuggest.nim"
-
-  nimexec "c -d:release -o:" & ("bin/nimgrep".exe) & " tools/nimgrep.nim"
+  bundleNimsuggest()
+  nimCompile("tools/nimgrep.nim", options = "-d:release")
   when defined(windows): buildVccTool()
-
-  nimexec "c -o:" & ("bin/nimpretty".exe) & " nimpretty/nimpretty.nim"
-
+  nimCompile("nimpretty/nimpretty.nim", options = "-d:release")
   buildNimble(latest)
+  buildNimfind()
 
 proc nsis(latest: bool; args: string) =
   bundleNimbleExe(latest)
-  bundleNimsuggest(true)
+  bundleNimsuggest()
   bundleWinTools()
   # make sure we have generated the niminst executables:
   buildTool("tools/niminst/niminst", args)
@@ -272,8 +274,9 @@ proc boot(args: string) =
   var output = "compiler" / "nim".exe
   var finalDest = "bin" / "nim".exe
   # default to use the 'c' command:
-  let defaultCommand = if getEnv("NIM_COMPILE_TO_CPP", "false") == "true": "cpp" else: "c"
+  let defaultCommand = if getEnv(env_NIM_COMPILE_TO_CPP, "false") == "true": "cpp" else: "c"
   let bootOptions = if args.len == 0 or args.startsWith("-"): defaultCommand else: ""
+  echo "boot: defaultCommand: ", defaultCommand, " bootOptions: ", bootOptions
   let smartNimcache = (if "release" in args: "nimcache/r_" else: "nimcache/d_") &
                       hostOs & "_" & hostCpu
 
@@ -352,8 +355,8 @@ proc winReleaseArch(arch: string) =
     # Rebuilding koch is necessary because it uses its pointer size to
     # determine which mingw link to put in the NSIS installer.
     nimexec "c --cpu:$# koch" % cpu
-    exec "koch boot -d:release --cpu:$#" % cpu
-    exec "koch --latest zip -d:release"
+    kochExec "boot -d:release --cpu:$#" % cpu
+    kochExec "--latest zip -d:release"
     overwriteFile r"build\nim-$#.zip" % VersionAsString,
              r"web\upload\download\nim-$#_x$#.zip" % [VersionAsString, arch]
 
@@ -379,9 +382,7 @@ proc winRelease*() =
 template `|`(a, b): string = (if a.len > 0: a else: b)
 
 proc tests(args: string) =
-  # we compile the tester with taintMode:on to have a basic
-  # taint mode test :-)
-  nimexec "cc --taintMode:on --opt:speed testament/tester"
+  nimexec "cc --opt:speed testament/tester"
   # Since tests take a long time (on my machine), and we want to defy Murhpys
   # law - lets make sure the compiler really is freshly compiled!
   nimexec "c --lib:lib -d:release --opt:speed compiler/nim.nim"
@@ -416,6 +417,7 @@ proc temp(args: string) =
   let nimexec = findNim()
   exec(nimexec & " c -d:debug --debugger:native " & bootArgs & " " & (d / "compiler" / "nim"), 125)
   copyExe(output, finalDest)
+  setCurrentDir(origDir)
   if programArgs.len > 0: exec(finalDest & " " & programArgs)
 
 proc xtemp(cmd: string) =
@@ -428,6 +430,42 @@ proc xtemp(cmd: string) =
     exec(cmd)
   finally:
     copyExe(d / "bin" / "nim_backup".exe, d / "bin" / "nim".exe)
+
+proc runCI(cmd: string) =
+  doAssert cmd.len == 0, cmd # avoid silently ignoring
+  echo "runCI:", cmd
+  # note(@araq): Do not replace these commands with direct calls (eg boot())
+  # as that would weaken our testing efforts.
+  when defined(posix): # appveyor (on windows) didn't run this
+    # todo: implement `execWithEnv`
+    exec("env NIM_COMPILE_TO_CPP=false $1 boot" % kochExe.quoteShell)
+  kochExec "boot -d:release"
+  kochExec "nimble"
+  exec "nim e tests/test_nimscript.nims"
+
+  when false:
+    for pkg in "zip opengl sdl1 jester@#head niminst".split:
+      exec "nimble install -y" & pkg
+
+  when defined(windows):
+    # note: will be over-written below
+    exec "nim c -d:nimCoroutines --os:genode -d:posix --compileOnly testament/tester"
+    when false:
+      kochExec "csource"
+      kochExec "zip"
+
+  # main bottleneck: runs all main tests
+  exec "nim c -r -d:nimCoroutines testament/tester --pedantic all -d:nimCoroutines"
+  exec "nim c -r nimdoc/tester"
+
+  nimCompile "nimpretty/nimpretty.nim"
+  exec "nim c -r nimpretty/tester.nim"
+
+  when defined(posix):
+    kochExec "docs --git.commit:devel"
+    kochExec "csource"
+    kochExec "nimsuggest"
+    exec "nim c -r nimsuggest/tester"
 
 proc pushCsources() =
   if not dirExists("../csources/.git"):
@@ -476,8 +514,7 @@ proc testUnixInstall(cmdLineRest: string) =
       execCleanPath("./koch --latest tools")
       # check the tests work:
       putEnv("NIM_EXE_NOT_IN_PATH", "NOT_IN_PATH")
-      execCleanPath("./koch tests", destDir / "bin")
-      #execCleanPath("./koch tests cat newconfig", destDir / "bin")
+      execCleanPath("./koch tests cat megatest", destDir / "bin")
     else:
       echo "Version check: failure"
   finally:
@@ -538,6 +575,7 @@ when isMainModule:
       of "distrohelper": geninstall()
       of "install": install(op.cmdLineRest)
       of "testinstall": testUnixInstall(op.cmdLineRest)
+      of "runci": runCI(op.cmdLineRest)
       of "test", "tests": tests(op.cmdLineRest)
       of "temp": temp(op.cmdLineRest)
       of "xtemp": xtemp(op.cmdLineRest)
@@ -545,7 +583,7 @@ when isMainModule:
       of "nimble":
         if stable: buildNimble(false)
         else: buildNimble(existsDir(".git") or latest)
-      of "nimsuggest": bundleNimsuggest(buildExe=true)
+      of "nimsuggest": bundleNimsuggest()
       of "tools":
         if stable: buildTools(false)
         else: buildTools(existsDir(".git") or latest)

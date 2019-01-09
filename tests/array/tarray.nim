@@ -1,7 +1,5 @@
 discard """
-  file: "tarray.nim"
-  output:
-'''
+output: '''
 [4, 5, 6]
 
 [16, 25, 36]
@@ -20,7 +18,7 @@ paper
 @[2, 3, 4]321
 9.0 4.0
 3
-@[(Field0: 1, Field1: 2), (Field0: 3, Field1: 5)]
+@[(1, 2), (3, 5)]
 2
 @["a", "new one", "c"]
 @[1, 2, 3]
@@ -30,6 +28,7 @@ dflfdjkl__abcdefgasfsgdfgsgdfggsdfasdfsafewfkljdsfajsdf
 kgdchlfniambejop
 fjpmholcibdgeakn
 '''
+joinable: false
 """
 
 block tarray:
@@ -358,7 +357,7 @@ block troofregression:
   echo testStr[testStr.len - 8 .. testStr.len - 1] & "__" & testStr[0 .. testStr.len - pred(rot)]
 
   var
-    instructions = readFile(getAppDir() / "troofregression2.txt").split(',')
+    instructions = readFile(parentDir(currentSourcePath) / "troofregression2.txt").split(',')
     programs = "abcdefghijklmnop"
 
   proc dance(dancers: string): string =
@@ -400,7 +399,7 @@ block troofregression:
 
 block tunchecked:
   {.boundchecks: on.}
-  type Unchecked {.unchecked.} = array[0, char]
+  type Unchecked = UncheckedArray[char]
 
   var x = cast[ptr Unchecked](alloc(100))
   x[5] = 'x'

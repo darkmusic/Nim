@@ -101,8 +101,6 @@ type
                                                     ## used to get a row's
                                                     ## column text on demand
 
-{.deprecated: [TRow: Row, TSqlQuery: SqlQuery, TDbConn: DbConn].}
-
 var
   buf: array[0..4096, char]
 
@@ -133,7 +131,7 @@ proc getErrInfo(db: var DbConn): tuple[res: int, ss, ne, msg: string] {.
               511.TSqlSmallInt, retSz.addr.PSQLSMALLINT)
   except:
     discard
-  return (res.int, $sqlState, $nativeErr, $errMsg)
+  return (res.int, $(addr sqlState), $(addr nativeErr), $(addr errMsg))
 
 proc dbError*(db: var DbConn) {.
           tags: [ReadDbEffect, WriteDbEffect], raises: [DbError] .} =

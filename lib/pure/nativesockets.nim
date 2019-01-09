@@ -71,6 +71,7 @@ type
     IPPROTO_IPV6,       ## Internet Protocol Version 6. Unsupported on Windows.
     IPPROTO_RAW,        ## Raw IP Packets Protocol. Unsupported on Windows.
     IPPROTO_ICMP        ## Control message protocol. Unsupported on Windows.
+    IPPROTO_ICMPV6      ## Control message protocol for IPv6. Unsupported on Windows.
 
   Servent* = object ## information about a service
     name*: string
@@ -105,6 +106,7 @@ else:
     osInvalidSocket* = posix.INVALID_SOCKET
     nativeAfInet = posix.AF_INET
     nativeAfInet6 = posix.AF_INET6
+    nativeAfUnix = posix.AF_UNIX
 
 proc `==`*(a, b: Port): bool {.borrow.}
   ## ``==`` for ports.
@@ -153,6 +155,7 @@ when not useWinVersion:
     of IPPROTO_IPV6:   result = posix.IPPROTO_IPV6
     of IPPROTO_RAW:    result = posix.IPPROTO_RAW
     of IPPROTO_ICMP:   result = posix.IPPROTO_ICMP
+    of IPPROTO_ICMPV6:   result = posix.IPPROTO_ICMPV6
 
 else:
   proc toInt(domain: Domain): cint =
@@ -178,7 +181,7 @@ proc toSockType*(protocol: Protocol): SockType =
     SOCK_STREAM
   of IPPROTO_UDP:
     SOCK_DGRAM
-  of IPPROTO_IP, IPPROTO_IPV6, IPPROTO_RAW, IPPROTO_ICMP:
+  of IPPROTO_IP, IPPROTO_IPV6, IPPROTO_RAW, IPPROTO_ICMP, IPPROTO_ICMPV6:
     SOCK_RAW
 
 proc createNativeSocket*(domain: Domain = AF_INET,
@@ -254,7 +257,8 @@ proc getAddrInfo*(address: string, port: Port, domain: Domain = AF_INET,
   when not defined(freebsd) and not defined(openbsd) and not defined(netbsd) and not defined(android) and not defined(haiku):
     if domain == AF_INET6:
       hints.ai_flags = AI_V4MAPPED
-  var gaiResult = getaddrinfo(address, $port, addr(hints), result)
+  let socket_port = if sockType == SOCK_RAW: "" else: $port
+  var gaiResult = getaddrinfo(address, socket_port, addr(hints), result)
   if gaiResult != 0'i32:
     when useWinVersion:
       raiseOSError(osLastError())
@@ -482,7 +486,17 @@ proc getAddrString*(sockAddr: ptr SockAddr): string =
         raiseOSError(osLastError())
     setLen(result, len(cstring(result)))
   else:
+    when defined(posix) and not defined(nimdoc):
+      if sockAddr.sa_family.cint == nativeAfUnix:
+        return "unix"
     raise newException(IOError, "Unknown socket family in getAddrString")
+
+when defined(posix) and not defined(nimdoc):
+  proc makeUnixAddr*(path: string): Sockaddr_un =
+    result.sun_family = AF_UNIX.uint16
+    if path.len >= Sockaddr_un_path_length:
+      raise newException(ValueError, "socket path too long")
+    copyMem(addr result.sun_path, path.cstring, path.len + 1)
 
 proc getSockName*(socket: SocketHandle): Port =
   ## returns the socket's associated port number.

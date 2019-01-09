@@ -51,8 +51,24 @@ proc execCleanPath*(cmd: string,
   if execShellCmd(cmd) != 0: quit("FAILURE", errorcode)
   putEnv("PATH", prevPath)
 
+let kochExe* = os.getAppFilename()
+  # note: assumes `kochdocs` is only used by koch.nim
+
+proc kochExec*(cmd: string) =
+  exec kochExe.quoteShell & " " & cmd
+
 proc nimexec*(cmd: string) =
+  # Consider using `nimCompile` instead
   exec findNim() & " " & cmd
+
+proc nimCompile*(input: string, outputDir = "bin", mode = "c", options = "") =
+  # TODO: simplify pending https://github.com/nim-lang/Nim/issues/9513
+  var cmd = findNim() & " " & mode
+  let output = outputDir / input.splitFile.name.exe
+  cmd.add " -o:" & output
+  cmd.add " " & options
+  cmd.add " " & input
+  exec cmd
 
 const
   pdf = """
@@ -60,6 +76,7 @@ doc/manual.rst
 doc/lib.rst
 doc/tut1.rst
 doc/tut2.rst
+doc/tut3.rst
 doc/nimc.rst
 doc/niminst.rst
 doc/gc.rst
@@ -72,6 +89,7 @@ doc/lib.rst
 doc/manual.rst
 doc/tut1.rst
 doc/tut2.rst
+doc/tut3.rst
 doc/nimc.rst
 doc/overview.rst
 doc/filters.rst
@@ -95,7 +113,7 @@ doc/manual/var_t_return.rst
   doc = """
 lib/system.nim
 lib/system/nimscript.nim
-lib/pure/ospaths.nim
+lib/deprecated/pure/ospaths.nim
 lib/pure/parsejson.nim
 lib/pure/cstrutils.nim
 lib/core/macros.nim
@@ -114,8 +132,9 @@ lib/js/asyncjs.nim
 lib/pure/os.nim
 lib/pure/strutils.nim
 lib/pure/math.nim
-lib/pure/matchers.nim
-lib/pure/editdistance.nim
+lib/std/editdistance.nim
+lib/std/wordwrap.nim
+lib/experimental/diff.nim
 lib/pure/algorithm.nim
 lib/pure/stats.nim
 lib/windows/winlean.nim
@@ -147,10 +166,8 @@ lib/impure/db_mysql.nim
 lib/impure/db_sqlite.nim
 lib/impure/db_odbc.nim
 lib/pure/db_common.nim
-lib/pure/httpserver.nim
 lib/pure/httpclient.nim
 lib/pure/smtp.nim
-lib/impure/ssl.nim
 lib/pure/ropes.nim
 lib/pure/unidecode/unidecode.nim
 lib/pure/xmlparser.nim
@@ -204,7 +221,6 @@ lib/pure/selectors.nim
 lib/pure/sugar.nim
 lib/pure/collections/chains.nim
 lib/pure/asyncfile.nim
-lib/deprecated/pure/ftpclient.nim
 lib/pure/asyncftpclient.nim
 lib/pure/lenientops.nim
 lib/pure/md5.nim

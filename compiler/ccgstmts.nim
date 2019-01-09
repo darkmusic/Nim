@@ -307,11 +307,13 @@ proc genSingleVar(p: BProc, a: PNode) =
 
 proc genClosureVar(p: BProc, a: PNode) =
   var immediateAsgn = a.sons[2].kind != nkEmpty
+  var v: TLoc
+  initLocExpr(p, a.sons[0], v)
+  genLineDir(p, a)
   if immediateAsgn:
-    var v: TLoc
-    initLocExpr(p, a.sons[0], v)
-    genLineDir(p, a)
     loadInto(p, a.sons[0], a.sons[2], v)
+  else:
+    constructLoc(p, v)
 
 proc genVarStmt(p: BProc, n: PNode) =
   for it in n.sons:
@@ -509,7 +511,7 @@ proc genWhileStmt(p: BProc, t: PNode) =
          # for closure support weird loop bodies are generated:
       if loopBody.len == 2 and loopBody.sons[0].kind == nkEmpty:
         loopBody = loopBody.sons[1]
-      genComputedGoto(p, loopBody) # TODO foobar
+      genComputedGoto(p, loopBody)
     else:
       p.breakIdx = startBlock(p, "while (1) {$n")
       p.blocks[p.breakIdx].isLoop = true
@@ -557,7 +559,8 @@ proc genParForStmt(p: BProc, t: PNode) =
     initLocExpr(p, call.sons[1], rangeA)
     initLocExpr(p, call.sons[2], rangeB)
 
-    lineF(p, cpsStmts, "#pragma omp parallel for $4$n" &
+    # $n at the beginning because of #9710
+    lineF(p, cpsStmts, "$n#pragma omp $4$n" &
                         "for ($1 = $2; $1 <= $3; ++$1)",
                         [forLoopVar.loc.rdLoc,
                         rangeA.rdLoc, rangeB.rdLoc,
@@ -608,8 +611,10 @@ proc genRaiseStmt(p: BProc, t: PNode) =
     if isImportedException(typ, p.config):
       lineF(p, cpsStmts, "throw $1;$n", [e])
     else:
-      lineCg(p, cpsStmts, "#raiseException((#Exception*)$1, $2);$n",
-          [e, makeCString(typ.sym.name.s)])
+      lineCg(p, cpsStmts, "#raiseExceptionEx((#Exception*)$1, $2, $3, $4, $5);$n",
+          [e, makeCString(typ.sym.name.s),
+          makeCString(if p.prc != nil: p.prc.name.s else: p.module.module.name.s),
+          makeCString(toFileName(p.config, t.info)), rope(toLinenumber(t.info))])
   else:
     genLineDir(p, t)
     # reraise the last exception:
@@ -872,14 +877,15 @@ proc genTryCpp(p: BProc, t: PNode, d: var TLoc) =
 
   discard pop(p.nestedTryStmts)
 
-  if not catchAllPresent and t[^1].kind == nkFinally:
-    # finally requires catch all presence
-    startBlock(p, "catch (...) {$n")
-    genSimpleBlock(p, t[^1][0])
-    line(p, cpsStmts, ~"throw;$n")
-    endBlock(p)
-
   if t[^1].kind == nkFinally:
+    # c++ does not have finally, therefore code needs to be generated twice
+    if not catchAllPresent:
+      # finally requires catch all presence
+      startBlock(p, "catch (...) {$n")
+      genStmts(p, t[^1][0])
+      line(p, cpsStmts, ~"throw;$n")
+      endBlock(p)
+
     genSimpleBlock(p, t[^1][0])
 
 proc genTry(p: BProc, t: PNode, d: var TLoc) =

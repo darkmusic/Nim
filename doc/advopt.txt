@@ -11,8 +11,9 @@ Advanced commands:
   //buildIndex              build an index for the whole documentation
   //run                     run the project (with Tiny C backend; buggy!)
   //genDepend               generate a DOT file containing the
-                            module dependency graph
+                          module dependency graph
   //dump                    dump all defined conditionals and search paths
+                            see also: --dump.format:json (useful with: ` | jq`)
   //check                   checks the project for syntax and semantic
 
 Advanced options:
@@ -25,6 +26,13 @@ Advanced options:
   --warning[X]:on|off       turn specific warning X on|off
   --hints:on|off|list       turn all hints on|off or list all available
   --hint[X]:on|off          turn specific hint X on|off
+  --styleCheck:off|hint|error
+                            produce hints or errors for Nim identifiers that
+                            do not adhere to Nim's official style guide
+                            https://nim-lang.org/docs/nep1.html
+  --showAllMismatches:on|off
+                            show all mismatching candidates in overloading
+                            resolution
   --lib:PATH                set the system library path
   --import:PATH             add an automatically imported module
   --include:PATH            add an automatically included module
@@ -47,8 +55,6 @@ Advanced options:
   --clibdir:DIR             modify the linker library search path
   --clib:LIBNAME            link an additional C library
                             (you should omit platform-specific extensions)
-  --genMapping              generate a mapping file containing
-                            (Nim, mangled) identifier pairs
   --project                 document the whole project (doc2)
   --docSeeSrcUrl:url        activate 'see source' for doc and doc2 commands
                             (see doc.item.seesrc in config/nimdoc.cfg)
@@ -70,11 +76,12 @@ Advanced options:
                             strings is allowed; only for backwards compatibility
   --nilseqs:on|off          allow 'nil' for strings/seqs for
                             backwards compatibility
+  --oldast:on|off           use old AST for backwards compatibility
   --skipCfg                 do not read the general configuration file
   --skipUserCfg             do not read the user's configuration file
   --skipParentCfg           do not read the parent dirs' configuration files
   --skipProjCfg             do not read the project's configuration file
-  --gc:refc|v2|markAndSweep|boehm|go|none|regions
+  --gc:refc|markAndSweep|boehm|go|none|regions
                             select the GC to use; default is 'refc'
   --index:on|off            turn index file generation on|off
   --putenv:key=value        set an environment variable
@@ -94,7 +101,12 @@ Advanced options:
   --listCmd                 list the commands used to execute external programs
   --parallelBuild:0|1|...   perform a parallel build
                             value = number of processors (0 for auto-detect)
+  --incremental:on|off      only recompile the changed modules (experimental!)
   --verbosity:0|1|2|3       set Nim's verbosity level (1 is default)
+  --errorMax:N              stop compilation after N errors; 0 means unlimited
   --experimental:$1
                             enable experimental language feature
   -v, --version             show detailed version information
+  --profiler:on|off         Enable profiling; requires `import nimprof`, and
+                            works better with `--stackTrace:on`
+                            see also https://nim-lang.github.io/Nim/estp.html

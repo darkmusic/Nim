@@ -30,7 +30,7 @@ type
     lastTok: TTokType
     inquote, lastTokWasTerse: bool
     semicolons: SemicolonKind
-    col, lastLineNumber, lineSpan, indentLevel, indWidth: int
+    col, lastLineNumber, lineSpan, indentLevel, indWidth*: int
     keepIndents*: int
     doIndentMore*: int
     content: string
@@ -41,9 +41,10 @@ type
 proc openEmitter*(em: var Emitter, cache: IdentCache;
                   config: ConfigRef, fileIdx: FileIndex) =
   let fullPath = Absolutefile config.toFullPath(fileIdx)
-  em.indWidth = getIndentWidth(fileIdx, llStreamOpen(fullPath, fmRead),
-                               cache, config)
-  if em.indWidth == 0: em.indWidth = 2
+  if em.indWidth == 0:
+    em.indWidth = getIndentWidth(fileIdx, llStreamOpen(fullPath, fmRead),
+                                cache, config)
+    if em.indWidth == 0: em.indWidth = 2
   em.config = config
   em.fid = fileIdx
   em.lastTok = tkInvalid
@@ -111,15 +112,16 @@ proc softLinebreak(em: var Emitter, lit: string) =
       for i in 1..em.indentLevel+moreIndent(em): wr(" ")
     else:
       # search backwards for a good split position:
-      for a in em.altSplitPos:
+      for a in mitems(em.altSplitPos):
         if a > em.fixedUntil:
           var spaces = 0
           while a+spaces < em.content.len and em.content[a+spaces] == ' ':
             inc spaces
           if spaces > 0: delete(em.content, a, a+spaces-1)
-          let ws = "\L" & repeat(' ',em.indentLevel+moreIndent(em))
           em.col = em.content.len - a
+          let ws = "\L" & repeat(' ', em.indentLevel+moreIndent(em))
           em.content.insert(ws, a)
+          a = -1
           break
 
 proc emitTok*(em: var Emitter; L: TLexer; tok: TToken) =
@@ -244,7 +246,7 @@ proc emitTok*(em: var Emitter; L: TLexer; tok: TToken) =
     wr(TokTypeToStr[tok.tokType])
     if not em.inquote: wr(" ")
   of tkOpr, tkDotDot:
-    if tok.strongSpaceA == 0 and tok.strongSpaceB == 0:
+    if (tok.strongSpaceA == 0 and tok.strongSpaceB == 0) or em.inquote:
       # bug #9504: remember to not spacify a keyword:
       lastTokWasTerse = true
       # if not surrounded by whitespace, don't produce any whitespace either:
@@ -256,8 +258,8 @@ proc emitTok*(em: var Emitter; L: TLexer; tok: TToken) =
         tok.strongSpaceB == 0 and tok.strongSpaceA > 0
 
       if not isUnary(tok):
-        wr(" ")
         rememberSplit(splitBinary)
+        wr(" ")
   of tkAccent:
     if not em.inquote and endsInAlpha(em): wr(" ")
     wr(TokTypeToStr[tok.tokType])

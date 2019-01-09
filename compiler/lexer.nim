@@ -635,7 +635,8 @@ proc handleHexChar(L: var TLexer, xi: var int) =
     inc(L.bufpos)
   else:
     lexMessage(L, errGenerated,
-      "expected a hex digit, but found: " & L.buf[L.bufpos])
+      "expected a hex digit, but found: " & L.buf[L.bufpos] &
+        " ; maybe prepend with 0")
     # Need to progress for `nim check`
     inc(L.bufpos)
 
@@ -966,7 +967,7 @@ proc getPrecedence*(tok: TToken, strongSpaces: bool): int =
     of '?': result = 2
     else: considerAsgn(2)
   of tkDiv, tkMod, tkShl, tkShr: result = 9
-  of tkIn, tkNotin, tkIs, tkIsnot, tkNot, tkOf, tkAs: result = 5
+  of tkIn, tkNotin, tkIs, tkIsnot, tkOf, tkAs: result = 5
   of tkDotDot: result = 6
   of tkAnd: result = 4
   of tkOr, tkXor, tkPtr, tkRef: result = 3
