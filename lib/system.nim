@@ -606,7 +606,7 @@ type
     ## Raised when assertion is proved wrong.
     ##
     ## Usually the result of using the `assert() template <#assert>`_.
-  ValueError* = object of Defect ## \
+  ValueError* = object of CatchableError ## \
     ## Raised for string and object conversion errors.
   KeyError* = object of ValueError ## \
     ## Raised if a key cannot be found in a table.
@@ -2700,6 +2700,7 @@ proc `$`*[T: tuple|object](x: T): string =
       firstElement = false
     else:
       result.add("...")
+      firstElement = false
   when not isNamed:
     if count == 1:
       result.add(",") # $(1,) should print as the semantically legal (1,)
@@ -3237,14 +3238,15 @@ when not defined(JS): #and not defined(nimscript):
 
     proc open*(f: var File, filename: string,
                mode: FileMode = fmRead, bufSize: int = -1): bool {.tags: [],
-               benign.}
+               raises: [], benign.}
       ## Opens a file named `filename` with given `mode`.
       ##
       ## Default mode is readonly. Returns true iff the file could be opened.
       ## This throws no exception if the file could not be opened.
 
     proc open*(f: var File, filehandle: FileHandle,
-               mode: FileMode = fmRead): bool {.tags: [], benign.}
+               mode: FileMode = fmRead): bool {.tags: [], raises: [],
+               benign.}
       ## Creates a ``File`` from a `filehandle` with given `mode`.
       ##
       ## Default mode is readonly. Returns true iff the file could be opened.
@@ -3253,7 +3255,7 @@ when not defined(JS): #and not defined(nimscript):
                mode: FileMode = fmRead, bufSize: int = -1): File =
       ## Opens a file named `filename` with given `mode`.
       ##
-      ## Default mode is readonly. Raises an ``IO`` exception if the file
+      ## Default mode is readonly. Raises an ``IOError`` if the file
       ## could not be opened.
       if not open(result, filename, mode, bufSize):
         sysFatal(IOError, "cannot open: ", filename)
@@ -3455,6 +3457,10 @@ when not defined(JS): #and not defined(nimscript):
     proc setControlCHook*(hook: proc () {.noconv.})
       ## allows you to override the behaviour of your application when CTRL+C
       ## is pressed. Only one such hook is supported.
+
+    when not defined(useNimRtl):
+      proc unsetControlCHook*()
+        ## reverts a call to setControlCHook
 
     proc writeStackTrace*() {.tags: [], gcsafe.}
       ## writes the current stack trace to ``stderr``. This is only works
