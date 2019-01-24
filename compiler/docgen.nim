@@ -119,7 +119,7 @@ proc newDocumentor*(filename: AbsoluteFile; cache: IdentCache; conf: ConfigRef, 
   result.conf = conf
   result.cache = cache
   initRstGenerator(result[], (if conf.cmd != cmdRst2tex: outHtml else: outLatex),
-                   conf.configVars, filename.string, {roSupportRawDirective},
+                   conf.configVars, filename.string, {roSupportRawDirective, roSupportMarkdown},
                    docgenFindFile, compilerMsgHandler)
 
   if conf.configVars.hasKey("doc.googleAnalytics"):
@@ -464,7 +464,10 @@ proc isVisible(d: PDoc; n: PNode): bool =
     # we cannot generate code for forwarded symbols here as we have no
     # exception tracking information here. Instead we copy over the comment
     # from the proc header.
-    result = {sfExported, sfFromGeneric, sfForward}*n.sym.flags == {sfExported}
+    if optDocInternal in d.conf.globalOptions:
+      result = {sfFromGeneric, sfForward}*n.sym.flags == {}
+    else:
+      result = {sfExported, sfFromGeneric, sfForward}*n.sym.flags == {sfExported}
     if result and containsOrIncl(d.emitted, n.sym.id):
       result = false
   elif n.kind == nkPragmaExpr:
@@ -991,7 +994,7 @@ proc commandRstAux(cache: IdentCache, conf: ConfigRef;
 
   d.isPureRst = true
   var rst = parseRst(readFile(filen.string), filen.string, 0, 1, d.hasToc,
-                     {roSupportRawDirective}, conf)
+                     {roSupportRawDirective, roSupportMarkdown}, conf)
   var modDesc = newStringOfCap(30_000)
   renderRstToOut(d[], rst, modDesc)
   d.modDesc = rope(modDesc)

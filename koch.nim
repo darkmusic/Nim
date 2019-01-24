@@ -74,10 +74,14 @@ Web options:
                            build the official docs, use UA-48159761-1
 """
 
-let kochExe* = os.getAppFilename()
+let kochExe* = when isMainModule: os.getAppFilename() # always correct when koch is main program, even if `koch` exe renamed eg: `nim c -o:koch_debug koch.nim`
+               else: getAppDir() / "koch".exe # works for winrelease
 
 proc kochExec*(cmd: string) =
   exec kochExe.quoteShell & " " & cmd
+
+proc kochExecFold*(desc, cmd: string) =
+  execFold(desc, kochExe.quoteShell & " " & cmd)
 
 template withDir(dir, body) =
   let old = getCurrentDir()
@@ -276,20 +280,28 @@ proc boot(args: string) =
   var output = "compiler" / "nim".exe
   var finalDest = "bin" / "nim".exe
   # default to use the 'c' command:
-  let defaultCommand = if getEnv("NIM_COMPILE_TO_CPP", "false") == "true": "cpp" else: "c"
-  let bootOptions = if args.len == 0 or args.startsWith("-"): defaultCommand else: ""
-  echo "boot: defaultCommand: ", defaultCommand, " bootOptions: ", bootOptions
+  let useCpp = getEnv("NIM_COMPILE_TO_CPP", "false") == "true"
   let smartNimcache = (if "release" in args: "nimcache/r_" else: "nimcache/d_") &
                       hostOs & "_" & hostCpu
 
-  copyExe(findStartNim(), 0.thVersion)
+  let nimStart = findStartNim()
+  copyExe(nimStart, 0.thVersion)
   for i in 0..2:
+    let defaultCommand = if useCpp: "cpp" else: "c"
+    let bootOptions = if args.len == 0 or args.startsWith("-"): defaultCommand else: ""
     echo "iteration: ", i+1
-    let extraOption = if i == 0:
-      "--skipUserCfg"
-        # forward compatibility: for bootstrap (1st iteration), avoid user flags
-        # that could break things, see #10030
-    else: ""
+    var extraOption = ""
+    if i == 0:
+      extraOption.add " --skipUserCfg --skipParentCfg"
+        # Note(D20190115T162028:here): the configs are skipped for bootstrap
+        # (1st iteration) to prevent newer flags from breaking bootstrap phase.
+        # fixes #10030.
+      let ret = execCmdEx(nimStart & " --version")
+      doAssert ret.exitCode == 0
+      let version = ret.output.splitLines[0]
+      if version.startsWith "Nim Compiler Version 0.19.0":
+        extraOption.add " -d:nimBoostrapCsources0_19_0"
+        # remove this when csources get updated
     exec i.thVersion & " $# $# $# --nimcache:$# compiler" / "nim.nim" %
       [bootOptions, extraOption, args, smartNimcache]
     if sameFileContent(output, i.thVersion):
@@ -444,12 +456,11 @@ proc runCI(cmd: string) =
   # note(@araq): Do not replace these commands with direct calls (eg boot())
   # as that would weaken our testing efforts.
   when defined(posix): # appveyor (on windows) didn't run this
-    # todo: implement `execWithEnv`
-    exec("env NIM_COMPILE_TO_CPP=false $1 boot" % kochExe.quoteShell)
-  kochExec "boot -d:release"
+    kochExecFold("Boot", "boot")
+  kochExecFold("Boot in release mode", "boot -d:release")
 
   ## build nimble early on to enable remainder to depend on it if needed
-  kochExec "nimble"
+  kochExecFold("Build Nimble", "nimble")
 
   when false:
     for pkg in "zip opengl sdl1 jester@#head niminst".split:
@@ -458,23 +469,23 @@ proc runCI(cmd: string) =
   buildTools() # altenatively, kochExec "tools --toolsNoNimble"
 
   ## run tests
-  exec "nim e tests/test_nimscript.nims"
+  execFold("Test nimscript", "nim e tests/test_nimscript.nims")
   when defined(windows):
     # note: will be over-written below
-    exec "nim c -d:nimCoroutines --os:genode -d:posix --compileOnly testament/tester"
+    execFold("Compile tester", "nim c -d:nimCoroutines --os:genode -d:posix --compileOnly testament/tester")
 
   # main bottleneck here
-  exec "nim c -r -d:nimCoroutines testament/tester --pedantic all -d:nimCoroutines"
+  execFold("Run tester", "nim c -r -d:nimCoroutines testament/tester --pedantic all -d:nimCoroutines")
 
-  exec "nim c -r nimdoc/tester"
-  exec "nim c -r nimpretty/tester.nim"
+  execFold("Run nimdoc tests", "nim c -r nimdoc/tester")
+  execFold("Run nimpretty tests", "nim c -r nimpretty/tester.nim")
   when defined(posix):
-    exec "nim c -r nimsuggest/tester"
+    execFold("Run nimsuggest tests", "nim c -r nimsuggest/tester")
 
   ## remaining actions
   when defined(posix):
-    kochExec "docs --git.commit:devel"
-    kochExec "csource"
+    kochExecFold("Docs", "docs --git.commit:devel")
+    kochExecFold("C sources", "csource")
   elif defined(windows):
     when false:
       kochExec "csource"

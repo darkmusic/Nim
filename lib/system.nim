@@ -569,7 +569,12 @@ type
       trace: string
     else:
       trace: seq[StackTraceEntry]
-    raiseId: uint # set when exception is raised
+    when defined(nimBoostrapCsources0_19_0):
+      # see #10315, bootstrap with `nim cpp` from csources gave error:
+      # error: no member named 'raise_id' in 'Exception'
+      raise_id: uint # set when exception is raised
+    else:
+      raiseId: uint # set when exception is raised
     up: ref Exception # used for stacking exceptions. Not exported!
 
   Defect* = object of Exception ## \
@@ -3458,7 +3463,7 @@ when not defined(JS): #and not defined(nimscript):
       ## allows you to override the behaviour of your application when CTRL+C
       ## is pressed. Only one such hook is supported.
 
-    when not defined(useNimRtl):
+    when not defined(noSignalHandler) and not defined(useNimRtl):
       proc unsetControlCHook*()
         ## reverts a call to setControlCHook
 
@@ -3881,15 +3886,21 @@ proc gorgeEx*(command: string, input = "", cache = ""): tuple[output: string,
   ## Same as `gorge` but also returns the precious exit code.
   discard
 
-proc `+=`*[T: SomeOrdinal|uint|uint64](x: var T, y: T) {.
+proc `+=`*[T: SomeInteger](x: var T, y: T) {.
   magic: "Inc", noSideEffect.}
-  ## Increments an ordinal
+  ## Increments an integer
 
-proc `-=`*[T: SomeOrdinal|uint|uint64](x: var T, y: T) {.
+proc `+=`*[T: enum|bool](x: var T, y: T) {.
+  magic: "Inc", noSideEffect, deprecated: "use `inc` instead".}
+
+proc `-=`*[T: SomeInteger](x: var T, y: T) {.
   magic: "Dec", noSideEffect.}
   ## Decrements an ordinal
 
-proc `*=`*[T: SomeOrdinal|uint|uint64](x: var T, y: T) {.
+proc `-=`*[T: enum|bool](x: var T, y: T) {.
+  magic: "Dec", noSideEffect, deprecated: "0.20.0, use `dec` instead".}
+
+proc `*=`*[T: SomeInteger](x: var T, y: T) {.
   inline, noSideEffect.} =
   ## Binary `*=` operator for ordinals
   x = x * y

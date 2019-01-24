@@ -24,15 +24,18 @@ const
 
 proc semTemplateExpr(c: PContext, n: PNode, s: PSym,
                      flags: TExprFlags = {}): PNode =
-  markUsed(c.config, n.info, s, c.graph.usageSym)
-  onUse(n.info, s)
+  let info = getCallLineInfo(n)
+  markUsed(c.config, info, s, c.graph.usageSym)
+  onUse(info, s)
+  # Note: This is n.info on purpose. It prevents template from creating an info
+  # context when called from an another template
   pushInfoContext(c.config, n.info, s.detailedInfo)
   result = evalTemplate(n, s, getCurrOwner(c), c.config, efFromHlo in flags)
   if efNoSemCheck notin flags: result = semAfterMacroCall(c, n, result, s, flags)
   popInfoContext(c.config)
 
   # XXX: A more elaborate line info rewrite might be needed
-  result.info = n.info
+  result.info = info
 
 proc semFieldAccess(c: PContext, n: PNode, flags: TExprFlags = {}): PNode
 
@@ -108,6 +111,8 @@ const
 
 proc checkConvertible(c: PContext, castDest, src: PType): TConvStatus =
   result = convOK
+  # We're interested in the inner type and not in the static tag
+  var src = src.skipTypes({tyStatic})
   if sameType(castDest, src) and castDest.sym == src.sym:
     # don't annoy conversions that may be needed on another processor:
     if castDest.kind notin IntegralTypes+{tyRange}:
@@ -230,7 +235,7 @@ proc semConv(c: PContext, n: PNode): PNode =
   # special case to make MyObject(x = 3) produce a nicer error message:
   if n[1].kind == nkExprEqExpr and
       targetType.skipTypes(abstractPtrs).kind == tyObject:
-    localError(c.config, n.info, "object contruction uses ':', not '='")
+    localError(c.config, n.info, "object construction uses ':', not '='")
   var op = semExprWithType(c, n.sons[1])
   if targetType.isMetaType:
     let final = inferWithMetatype(c, targetType, op, true)
@@ -403,8 +408,8 @@ proc semIs(c: PContext, n: PNode, flags: TExprFlags): PNode =
       n[1] = makeTypeSymNode(c, lhsType, n[1].info)
       lhsType = n[1].typ
   else:
-    internalAssert c.config, lhsType.base.kind != tyNone
-    if c.inGenericContext > 0 and lhsType.base.containsGenericType:
+    if lhsType.base.kind == tyNone or
+        (c.inGenericContext > 0 and lhsType.base.containsGenericType):
       # BUGFIX: don't evaluate this too early: ``T is void``
       return
 
@@ -802,7 +807,7 @@ proc afterCallActions(c: PContext; n, orig: PNode, flags: TExprFlags): PNode =
       result = magicsAfterOverloadResolution(c, result, flags)
     if result.typ != nil and
         not (result.typ.kind == tySequence and result.typ.sons[0].kind == tyEmpty):
-      liftTypeBoundOps(c, result.typ, n.info)
+      liftTypeBoundOps(c.graph, result.typ, n.info)
     #result = patchResolvedTypeBoundOp(c, result)
   if c.matchedConcept == nil:
     result = evalAtCompileTime(c, result)
@@ -917,7 +922,7 @@ proc semExprNoType(c: PContext, n: PNode): PNode =
   let isPush = hintExtendedContext in c.config.notes
   if isPush: pushInfoContext(c.config, n.info)
   result = semExpr(c, n, {efWantStmt})
-  discardCheck(c, result, {})
+  result = discardCheck(c, result, {})
   if isPush: popInfoContext(c.config)
 
 proc isTypeExpr(n: PNode): bool =
@@ -1082,8 +1087,9 @@ proc semSym(c: PContext, n: PNode, sym: PSym, flags: TExprFlags): PNode =
     if efNoEvaluateGeneric in flags and s.ast[genericParamsPos].len > 0 or
        (n.kind notin nkCallKinds and s.requiredParams > 0) or
        sfCustomPragma in sym.flags:
-      markUsed(c.config, n.info, s, c.graph.usageSym)
-      onUse(n.info, s)
+      let info = getCallLineInfo(n)
+      markUsed(c.config, info, s, c.graph.usageSym)
+      onUse(info, s)
       result = symChoice(c, n, s, scClosed)
     else:
       result = semTemplateExpr(c, n, s, flags)
@@ -1169,9 +1175,10 @@ proc semSym(c: PContext, n: PNode, sym: PSym, flags: TExprFlags): PNode =
     onUse(n.info, s)
     result = newSymNode(s, n.info)
   else:
-    markUsed(c.config, n.info, s, c.graph.usageSym)
-    onUse(n.info, s)
-    result = newSymNode(s, n.info)
+    let info = getCallLineInfo(n)
+    markUsed(c.config, info, s, c.graph.usageSym)
+    onUse(info, s)
+    result = newSymNode(s, info)
 
 proc builtinFieldAccess(c: PContext, n: PNode, flags: TExprFlags): PNode =
   ## returns nil if it's not a built-in field access
@@ -1592,7 +1599,7 @@ proc semAsgn(c: PContext, n: PNode; mode=asgnNormal): PNode =
           typeMismatch(c.config, n.info, lhs.typ, rhsTyp)
 
     n.sons[1] = fitNode(c, le, rhs, goodLineInfo(n[1]))
-    liftTypeBoundOps(c, lhs.typ, lhs.info)
+    liftTypeBoundOps(c.graph, lhs.typ, lhs.info)
     #liftTypeBoundOps(c, n.sons[0].typ, n.sons[0].info)
 
     fixAbstractType(c, n)
@@ -1639,7 +1646,7 @@ proc semProcBody(c: PContext, n: PNode): PNode =
       a.sons[1] = result
       result = semAsgn(c, a)
   else:
-    discardCheck(c, result, {})
+    result = discardCheck(c, result, {})
 
   if c.p.owner.kind notin {skMacro, skTemplate} and
      c.p.resultSym != nil and c.p.resultSym.typ.isMetaType:
