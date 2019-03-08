@@ -20,7 +20,7 @@ import
   pathutils
 
 const
-  exportSection = skTemp
+  exportSection = skField
 
 type
   TSections = array[TSymKind, Rope]
@@ -67,7 +67,7 @@ proc attachToType(d: PDoc; p: PSym): PSym =
 
 template declareClosures =
   proc compilerMsgHandler(filename: string, line, col: int,
-                          msgKind: rst.MsgKind, arg: string) {.procvar.} =
+                          msgKind: rst.MsgKind, arg: string) {.procvar, gcsafe.} =
     # translate msg kind:
     var k: TMsgKind
     case msgKind
@@ -81,9 +81,10 @@ template declareClosures =
     of mwUnknownSubstitution: k = warnUnknownSubstitutionX
     of mwUnsupportedLanguage: k = warnLanguageXNotSupported
     of mwUnsupportedField: k = warnFieldXNotSupported
-    globalError(conf, newLineInfo(conf, AbsoluteFile filename, line, col), k, arg)
+    {.gcsafe.}:
+      globalError(conf, newLineInfo(conf, AbsoluteFile filename, line, col), k, arg)
 
-  proc docgenFindFile(s: string): string {.procvar.} =
+  proc docgenFindFile(s: string): string {.procvar, gcsafe.} =
     result = options.findFile(conf, s).string
     if result.len == 0:
       result = getCurrentDir() / s
@@ -100,14 +101,12 @@ proc parseRst(text, filename: string,
 proc getOutFile2(conf: ConfigRef; filename: RelativeFile,
                  ext: string, dir: RelativeDir; guessTarget: bool): AbsoluteFile =
   if optWholeProject in conf.globalOptions:
-    # This is correct, for 'nim doc --project' we interpret the '--out' option as an
-    # absolute directory, not as a filename!
-    let d = if conf.outFile.isEmpty: conf.projectPath / dir else: AbsoluteDir(conf.outFile)
+    let d = if conf.outDir.isEmpty: conf.projectPath / dir else: conf.outDir
     createDir(d)
     result = d / changeFileExt(filename, ext)
   elif guessTarget:
-    let d = if not conf.outFile.isEmpty: splitFile(conf.outFile).dir
-    else: conf.projectPath
+    let d = if not conf.outDir.isEmpty: conf.outDir
+            else: conf.projectPath
     createDir(d)
     result = d / changeFileExt(filename, ext)
   else:
@@ -894,9 +893,9 @@ proc generateTags*(d: PDoc, n: PNode, r: var Rope) =
   else: discard
 
 proc genSection(d: PDoc, kind: TSymKind) =
-  const sectionNames: array[skTemp..skTemplate, string] = [
-    "Exports", "Imports", "Types", "Vars", "Lets", "Consts", "Vars", "Procs", "Funcs",
-    "Methods", "Iterators", "Converters", "Macros", "Templates"
+  const sectionNames: array[skModule..skField, string] = [
+    "Imports", "Types", "Vars", "Lets", "Consts", "Vars", "Procs", "Funcs",
+    "Methods", "Iterators", "Converters", "Macros", "Templates", "Exports"
   ]
   if d.section[kind] == nil: return
   var title = sectionNames[kind].rope
@@ -952,9 +951,8 @@ proc genOutFile(d: PDoc): Rope =
 
 proc generateIndex*(d: PDoc) =
   if optGenIndex in d.conf.globalOptions:
-    let dir = if d.conf.outFile.isEmpty: d.conf.projectPath / RelativeDir"htmldocs"
-              elif optWholeProject in d.conf.globalOptions: AbsoluteDir(d.conf.outFile)
-              else: AbsoluteDir(d.conf.outFile.string.splitFile.dir)
+    let dir = if not d.conf.outDir.isEmpty: d.conf.outDir
+              else: d.conf.projectPath / RelativeDir"htmldocs"
     createDir(dir)
     let dest = dir / changeFileExt(relativeTo(AbsoluteFile d.filename,
                                               d.conf.projectPath), IndexExt)
@@ -994,7 +992,13 @@ proc writeOutputJson*(d: PDoc, useWarning = false) =
                  warnUser, "unable to open file \"" & d.destFile.string &
                  "\" for writing")
 
+proc handleDocOutputOptions*(conf: ConfigRef) =
+  if optWholeProject in conf.globalOptions:
+    # Backward compatibility with previous versions
+    conf.outDir = AbsoluteDir(conf.outDir / conf.outFile)
+
 proc commandDoc*(cache: IdentCache, conf: ConfigRef) =
+  handleDocOutputOptions conf
   var ast = parseFile(conf.projectMainIdx, cache, conf)
   if ast == nil: return
   var d = newDocumentor(conf.projectFull, cache, conf)

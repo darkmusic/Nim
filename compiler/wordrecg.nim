@@ -37,7 +37,7 @@ type
     wMagic, wThread, wFinal, wProfiler, wMemTracker, wObjChecks,
     wIntDefine, wStrDefine, wBoolDefine
 
-    wDestroy,
+    wCursor,
 
     wImmediate, wConstructor, wDestructor, wDelegator, wOverride,
     wImportCpp, wImportObjC,
@@ -53,6 +53,7 @@ type
     wFastcall, wClosure, wNoconv, wOn, wOff, wChecks, wRangechecks,
     wBoundchecks, wOverflowchecks, wNilchecks,
     wFloatchecks, wNanChecks, wInfChecks, wMoveChecks,
+    wNonReloadable, wExecuteOnReload,
     wAssertions, wPatterns, wWarnings,
     wHints, wOptimization, wRaises, wWrites, wReads, wSize, wEffects, wTags,
     wDeadCodeElimUnused,  # deprecated, dead code elim always happens
@@ -125,7 +126,7 @@ const
     "magic", "thread", "final", "profiler", "memtracker", "objchecks",
     "intdefine", "strdefine", "booldefine",
 
-    "destroy",
+    "cursor",
 
     "immediate", "constructor", "destructor", "delegator", "override",
     "importcpp", "importobjc",
@@ -142,6 +143,7 @@ const
     "noconv", "on", "off", "checks", "rangechecks", "boundchecks",
     "overflowchecks", "nilchecks",
     "floatchecks", "nanchecks", "infchecks", "movechecks",
+    "nonreloadable", "executeonreload",
 
     "assertions", "patterns", "warnings", "hints",
     "optimization", "raises", "writes", "reads", "size", "effects", "tags",

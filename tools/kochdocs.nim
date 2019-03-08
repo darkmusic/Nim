@@ -122,6 +122,7 @@ doc/manual/var_t_return.rst
 
   doc = """
 lib/system.nim
+lib/system/io.nim
 lib/system/nimscript.nim
 lib/deprecated/pure/ospaths.nim
 lib/pure/parsejson.nim
@@ -248,6 +249,7 @@ lib/pure/bitops.nim
 lib/pure/nimtracker.nim
 lib/pure/punycode.nim
 lib/pure/volatile.nim
+lib/posix/posix_utils.nim
 """.splitWhitespace()
 
   doc0 = """
@@ -355,7 +357,7 @@ proc buildDocs*(args: string) =
   let
     a = nimArgs & " " & args
     docHackJs = "dochack.js"
-    docHackJsSource = docHackDir / "nimcache" / docHackJs
+    docHackJsSource = docHackDir / docHackJs
     docHackJsDest = docHtmlOutput / docHackJs
   buildJS()                     # This call generates docHackJsSource
   let docup = webUploadOutput / NimVersion

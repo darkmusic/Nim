@@ -232,7 +232,10 @@ proc listGcUnsafety(s: PSym; onlyWarning: bool; conf: ConfigRef) =
 proc useVar(a: PEffects, n: PNode) =
   let s = n.sym
   if isLocalVar(a, s):
-    if s.id notin a.init:
+    if sfNoInit in s.flags:
+      # If the variable is explicitly marked as .noinit. do not emit any error
+      a.init.add s.id
+    elif s.id notin a.init:
       if {tfNeedsInit, tfNotNil} * s.typ.flags != {}:
         message(a.config, n.info, warnProveInit, s.name.s)
       else:
@@ -540,7 +543,8 @@ proc notNilCheck(tracked: PEffects, n: PNode, paramType: PType) =
       if not containsNode(n, {nkDerefExpr, nkHiddenDeref}): return
     elif (n.kind == nkSym and n.sym.kind in routineKinds) or
          (n.kind in procDefs+{nkObjConstr, nkBracket, nkClosure, nkStrLit..nkTripleStrLit}) or
-         (n.kind in nkCallKinds and n[0].kind == nkSym and n[0].sym.magic == mArrToSeq):
+         (n.kind in nkCallKinds and n[0].kind == nkSym and n[0].sym.magic == mArrToSeq) or
+         n.typ.kind == tyTypeDesc:
       # 'p' is not nil obviously:
       return
     case impliesNotNil(tracked.guards, n)
@@ -569,10 +573,14 @@ proc isNoEffectList(n: PNode): bool {.inline.} =
   assert n.kind == nkEffectList
   n.len == 0 or (n[tagEffects] == nil and n[exceptionEffects] == nil)
 
-proc trackOperand(tracked: PEffects, n: PNode, paramType: PType) =
+proc isTrival(caller: PNode): bool {.inline.} =
+  result = caller.kind == nkSym and caller.sym.magic in {mEqProc, mIsNil}
+
+proc trackOperand(tracked: PEffects, n: PNode, paramType: PType; caller: PNode) =
   let a = skipConvAndClosure(n)
   let op = a.typ
-  if op != nil and op.kind == tyProc and n.skipConv.kind != nkNilLit:
+  # assume indirect calls are taken here:
+  if op != nil and op.kind == tyProc and n.skipConv.kind != nkNilLit and not isTrival(caller):
     internalAssert tracked.config, op.n.sons[0].kind == nkEffectList
     var effectList = op.n.sons[0]
     var s = n.skipConv
@@ -714,15 +722,32 @@ proc cstringCheck(tracked: PEffects; n: PNode) =
     message(tracked.config, n.info, warnUnsafeCode, renderTree(n))
 
 proc track(tracked: PEffects, n: PNode) =
+  template gcsafeAndSideeffectCheck() =
+    if notGcSafe(op) and not importedFromC(a):
+      # and it's not a recursive call:
+      if not (a.kind == nkSym and a.sym == tracked.owner):
+        if warnGcUnsafe in tracked.config.notes: warnAboutGcUnsafe(n, tracked.config)
+        markGcUnsafe(tracked, a)
+    if tfNoSideEffect notin op.flags and not importedFromC(a):
+      # and it's not a recursive call:
+      if not (a.kind == nkSym and a.sym == tracked.owner):
+        markSideEffect(tracked, a)
+
   case n.kind
   of nkSym:
     useVar(tracked, n)
   of nkRaiseStmt:
-    n.sons[0].info = n.info
-    #throws(tracked.exc, n.sons[0])
-    addEffect(tracked, n.sons[0], useLineInfo=false)
-    for i in 0 ..< safeLen(n):
-      track(tracked, n.sons[i])
+    if n[0].kind != nkEmpty:
+      n.sons[0].info = n.info
+      #throws(tracked.exc, n.sons[0])
+      addEffect(tracked, n.sons[0], useLineInfo=false)
+      for i in 0 ..< safeLen(n):
+        track(tracked, n.sons[i])
+    else:
+      # A `raise` with no arguments means we're going to re-raise the exception
+      # being handled or, if outside of an `except` block, a `ReraiseError`.
+      # Here we add a `Exception` tag in order to cover both the cases.
+      addEffect(tracked, createRaise(tracked.graph, n))
   of nkCallKinds:
     if getConstExpr(tracked.owner_module, n, tracked.graph) != nil:
       return
@@ -751,20 +776,13 @@ proc track(tracked: PEffects, n: PNode) =
           propagateEffects(tracked, n, a.sym)
         elif isIndirectCall(a, tracked.owner):
           assumeTheWorst(tracked, n, op)
+          gcsafeAndSideeffectCheck()
       else:
         mergeEffects(tracked, effectList.sons[exceptionEffects], n)
         mergeTags(tracked, effectList.sons[tagEffects], n)
-        if notGcSafe(op) and not importedFromC(a):
-          # and it's not a recursive call:
-          if not (a.kind == nkSym and a.sym == tracked.owner):
-            if warnGcUnsafe in tracked.config.notes: warnAboutGcUnsafe(n, tracked.config)
-            markGcUnsafe(tracked, a)
-        if tfNoSideEffect notin op.flags and not importedFromC(a):
-          # and it's not a recursive call:
-          if not (a.kind == nkSym and a.sym == tracked.owner):
-            markSideEffect(tracked, a)
+        gcsafeAndSideeffectCheck()
     if a.kind != nkSym or a.sym.magic != mNBindSym:
-      for i in 1 ..< len(n): trackOperand(tracked, n.sons[i], paramType(op, i))
+      for i in 1 ..< len(n): trackOperand(tracked, n.sons[i], paramType(op, i), a)
     if a.kind == nkSym and a.sym.magic in {mNew, mNewFinalize, mNewSeq}:
       # may not look like an assignment, but it is:
       let arg = n.sons[1]

@@ -446,10 +446,10 @@ proc deallocHeap*(runFinalizers = true; allowGcAfterwards = true) =
 type
   GlobalMarkerProc = proc () {.nimcall, benign.}
 var
-  globalMarkersLen: int
-  globalMarkers: array[0..3499, GlobalMarkerProc]
-  threadLocalMarkersLen: int
-  threadLocalMarkers: array[0..3499, GlobalMarkerProc]
+  globalMarkersLen {.exportc.}: int
+  globalMarkers {.exportc.}: array[0..3499, GlobalMarkerProc]
+  threadLocalMarkersLen {.exportc.}: int
+  threadLocalMarkers {.exportc.}: array[0..3499, GlobalMarkerProc]
   gHeapidGenerator: int
 
 proc nimRegisterGlobalMarker(markerProc: GlobalMarkerProc) {.compilerProc.} =
@@ -457,7 +457,7 @@ proc nimRegisterGlobalMarker(markerProc: GlobalMarkerProc) {.compilerProc.} =
     globalMarkers[globalMarkersLen] = markerProc
     inc globalMarkersLen
   else:
-    echo "[GC] cannot register global variable; too many global variables"
+    cstderr.rawWrite("[GC] cannot register global variable; too many global variables")
     quit 1
 
 proc nimRegisterThreadLocalMarker(markerProc: GlobalMarkerProc) {.compilerProc.} =
@@ -465,5 +465,5 @@ proc nimRegisterThreadLocalMarker(markerProc: GlobalMarkerProc) {.compilerProc.}
     threadLocalMarkers[threadLocalMarkersLen] = markerProc
     inc threadLocalMarkersLen
   else:
-    echo "[GC] cannot register thread local variable; too many thread local variables"
+    cstderr.rawWrite("[GC] cannot register thread local variable; too many thread local variables")
     quit 1
