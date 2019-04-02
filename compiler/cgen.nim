@@ -293,7 +293,7 @@ proc genObjectInit(p: BProc, section: TCProcSection, t: PType, a: TLoc,
     includeHeader(p.module, "<new>")
     linefmt(p, section, "new ($1) $2;$n", rdLoc(a), getTypeDesc(p.module, t))
 
-  if optNimV2 in p.config.globalOptions: return
+  #if optNimV2 in p.config.globalOptions: return
   case analyseObjectWithTypeField(t)
   of frNone:
     discard
@@ -324,10 +324,11 @@ proc isComplexValueType(t: PType): bool {.inline.} =
     (t.kind == tyProc and t.callConv == ccClosure)
 
 proc resetLoc(p: BProc, loc: var TLoc) =
-  let containsGcRef = containsGarbageCollectedRef(loc.t)
+  let containsGcRef = p.config.selectedGc != gcDestructors and containsGarbageCollectedRef(loc.t)
   let typ = skipTypes(loc.t, abstractVarRange)
   if isImportedCppType(typ): return
   if p.config.selectedGc == gcDestructors and typ.kind in {tyString, tySequence}:
+    assert rdLoc(loc) != nil
     linefmt(p, cpsStmts, "$1.len = 0; $1.p = NIM_NIL;$n", rdLoc(loc))
   elif not isComplexValueType(typ):
     if containsGcRef:
@@ -534,12 +535,35 @@ proc initLocExpr(p: BProc, e: PNode, result: var TLoc) =
 
 proc initLocExprSingleUse(p: BProc, e: PNode, result: var TLoc) =
   initLoc(result, locNone, e, OnUnknown)
-  result.flags.incl lfSingleUse
+  if e.kind in nkCallKinds and (e[0].kind != nkSym or e[0].sym.magic == mNone):
+    # We cannot check for tfNoSideEffect here because of mutable parameters.
+    discard "bug #8202; enforce evaluation order for nested calls for C++ too"
+    # We may need to consider that 'f(g())' cannot be rewritten to 'tmp = g(); f(tmp)'
+    # if 'tmp' lacks a move/assignment operator.
+    if e[0].kind == nkSym and sfConstructor in e[0].sym.flags:
+      result.flags.incl lfSingleUse
+  else:
+    result.flags.incl lfSingleUse
   expr(p, e, result)
 
 include ccgcalls, "ccgstmts.nim"
 
 proc initFrame(p: BProc, procname, filename: Rope): Rope =
+  const frameDefines = """
+  $1  define nimfr_(proc, file) \
+      TFrame FR_; \
+      FR_.procname = proc; FR_.filename = file; FR_.line = 0; FR_.len = 0; #nimFrame(&FR_);
+
+  $1  define nimfrs_(proc, file, slots, length) \
+      struct {TFrame* prev;NCSTRING procname;NI line;NCSTRING filename; NI len; VarSlot s[slots];} FR_; \
+      FR_.procname = proc; FR_.filename = file; FR_.line = 0; FR_.len = length; #nimFrame((TFrame*)&FR_);
+
+  $1  define nimln_(n, file) \
+      FR_.line = n; FR_.filename = file;
+  """
+  if p.module.s[cfsFrameDefines].len == 0:
+    appcg(p.module, p.module.s[cfsFrameDefines], frameDefines, [rope("#")])
+
   discard cgsym(p.module, "nimFrame")
   if p.maxFrameLen > 0:
     discard cgsym(p.module, "VarSlot")
@@ -691,6 +715,8 @@ proc cgsym(m: BModule, name: string): Rope =
     # we're picky here for the system module too:
     rawMessage(m.config, errGenerated, "system module needs: " & name)
   result = sym.loc.r
+  if m.hcrOn and sym != nil and sym.kind in skProc..skIterator:
+    result.addActualPrefixForHCR(m.module, sym)
 
 proc generateHeaders(m: BModule) =
   add(m.s[cfsHeaders], "\L#include \"nimbase.h\"\L")
@@ -853,7 +879,7 @@ proc allPathsAsgnResult(n: PNode): InitResultEnum =
   of nkSym:
     # some path reads from 'result' before it was written to!
     if n.sym.kind == skResult: result = InitRequired
-  of nkTryStmt:
+  of nkTryStmt, nkHiddenTryStmt:
     # We need to watch out for the following problem:
     # try:
     #   result = stuffThatRaises()
@@ -1122,20 +1148,6 @@ proc genVarPrototype(m: BModule, n: PNode) =
       if m.hcrOn: addf(m.initProc.procSec(cpsLocals),
         "\t$1 = ($2*)hcrGetGlobal($3, \"$1\");$n", [sym.loc.r,
         getTypeDesc(m, sym.loc.t), getModuleDllPath(m, sym)])
-
-const
-  frameDefines = """
-$1  define nimfr_(proc, file) \
-    TFrame FR_; \
-    FR_.procname = proc; FR_.filename = file; FR_.line = 0; FR_.len = 0; #nimFrame(&FR_);
-
-$1  define nimfrs_(proc, file, slots, length) \
-    struct {TFrame* prev;NCSTRING procname;NI line;NCSTRING filename; NI len; VarSlot s[slots];} FR_; \
-    FR_.procname = proc; FR_.filename = file; FR_.line = 0; FR_.len = length; #nimFrame((TFrame*)&FR_);
-
-$1  define nimln_(n, file) \
-    FR_.line = n; FR_.filename = file;
-"""
 
 proc addIntTypes(result: var Rope; conf: ConfigRef) {.inline.} =
   addf(result, "#define NIM_INTBITS $1\L", [
@@ -1477,8 +1489,6 @@ proc genInitCode(m: BModule) =
   ## this function is called in cgenWriteModules after all modules are closed,
   ## it means raising dependency on the symbols is too late as it will not propogate
   ## into other modules, only simple rope manipulations are allowed
-  appcg(m, m.s[cfsForwardTypes], frameDefines, [rope("#")])
-
   var moduleInitRequired = m.hcrOn
   let initname = getInitName(m)
   var prc = "$1 N_NIMCALL(void, $2)(void) {$N" %
@@ -1608,6 +1618,9 @@ proc genModule(m: BModule, cfile: Cfile): Rope =
   add(result, genSectionStart(cfsHeaders, m.config))
   add(result, m.s[cfsHeaders])
   add(result, genSectionEnd(cfsHeaders, m.config))
+  add(result, genSectionStart(cfsFrameDefines, m.config))
+  add(result, m.s[cfsFrameDefines])
+  add(result, genSectionEnd(cfsFrameDefines, m.config))
 
   for i in countup(cfsForwardTypes, cfsProcs):
     if m.s[i].len > 0:

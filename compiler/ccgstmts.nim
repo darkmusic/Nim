@@ -17,6 +17,7 @@ const
 
 proc getTraverseProc(p: BProc, v: Psym): Rope =
   if p.config.selectedGC in {gcMarkAndSweep, gcDestructors, gcV2, gcRefc} and
+      optNimV2 notin p.config.globalOptions and
       containsGarbageCollectedRef(v.loc.t):
     # we register a specialized marked proc here; this has the advantage
     # that it works out of the box for thread local storage then :-)
@@ -621,15 +622,25 @@ proc genParForStmt(p: BProc, t: PNode) =
     #initLoc(forLoopVar.loc, locLocalVar, forLoopVar.typ, onStack)
     #discard mangleName(forLoopVar)
     let call = t.sons[1]
+    assert(sonsLen(call) in {4, 5})
     initLocExpr(p, call.sons[1], rangeA)
     initLocExpr(p, call.sons[2], rangeB)
 
     # $n at the beginning because of #9710
-    lineF(p, cpsStmts, "$n#pragma omp $4$n" &
-                        "for ($1 = $2; $1 <= $3; ++$1)",
-                        [forLoopVar.loc.rdLoc,
-                        rangeA.rdLoc, rangeB.rdLoc,
-                        call.sons[3].getStr.rope])
+    if call.sonsLen == 4: # `||`(a, b, annotation)
+      lineF(p, cpsStmts, "$n#pragma omp $4$n" &
+                          "for ($1 = $2; $1 <= $3; ++$1)",
+                          [forLoopVar.loc.rdLoc,
+                          rangeA.rdLoc, rangeB.rdLoc,
+                          call.sons[3].getStr.rope])
+    else: # `||`(a, b, step, annotation)
+      var step: TLoc
+      initLocExpr(p, call.sons[3], step)
+      lineF(p, cpsStmts, "$n#pragma omp $5$n" &
+                    "for ($1 = $2; $1 <= $3; $1 += $4)",
+                    [forLoopVar.loc.rdLoc,
+                    rangeA.rdLoc, rangeB.rdLoc, step.rdLoc,
+                    call.sons[4].getStr.rope])
 
     p.breakIdx = startBlock(p)
     p.blocks[p.breakIdx].isLoop = true
@@ -1039,8 +1050,12 @@ proc genTry(p: BProc, t: PNode, d: var TLoc) =
         let isObjFormat = if not p.module.compileToCpp:
           "#isObj(#getCurrentException()->Sup.m_type, $1)"
           else: "#isObj(#getCurrentException()->m_type, $1)"
-        appcg(p.module, orExpr, isObjFormat,
-              [genTypeInfo(p.module, t[i][j].typ, t[i][j].info)])
+
+        let checkFor = if optNimV2 in p.config.globalOptions:
+          genTypeInfo2Name(p.module, t[i][j].typ)
+        else:
+          genTypeInfo(p.module, t[i][j].typ, t[i][j].info)
+        appcg(p.module, orExpr, isObjFormat, [checkFor])
       if i > 1: line(p, cpsStmts, "else ")
       startBlock(p, "if ($1) {$n", [orExpr])
       if not quirkyExceptions:

@@ -24,7 +24,7 @@ proc checkConstructedType*(conf: ConfigRef; info: TLineInfo, typ: PType) =
   if t.kind in tyTypeClasses: discard
   elif t.kind in {tyVar, tyLent} and t.sons[0].kind in {tyVar, tyLent}:
     localError(conf, info, "type 'var var' is not allowed")
-  elif computeSize(conf, t) == szIllegalRecursion:
+  elif computeSize(conf, t) == szIllegalRecursion or isTupleRecursive(t):
     localError(conf, info,  "illegal recursion in type '" & typeToString(t) & "'")
   when false:
     if t.kind == tyObject and t.sons[0] != nil:
@@ -255,7 +255,7 @@ proc replaceTypeVarsS(cl: var TReplTypeVars, s: PSym): PSym =
   # (e.g. skGenericParam and skType).
   # Note: `s.magic` may be `mType` in an example such as:
   # proc foo[T](a: T, b = myDefault(type(a)))
-  if s.kind == skProc or s.magic != mNone:
+  if s.kind in routineKinds or s.magic != mNone:
     return s
 
   #result = PSym(idTableGet(cl.symMap, s))
@@ -291,7 +291,7 @@ proc instCopyType*(cl: var TReplTypeVars, t: PType): PType =
   when false:
     if newDestructors:
       result.assignment = nil
-      #result.destructor = nil
+      result.destructor = nil
       result.sink = nil
 
 proc handleGenericInvocation(cl: var TReplTypeVars, t: PType): PType =
@@ -404,7 +404,7 @@ proc handleGenericInvocation(cl: var TReplTypeVars, t: PType): PType =
     # adding myseq for myseq[system.int]
     # sigmatch: Formal myseq[=destroy.T] real myseq[system.int]
     #echo "DESTROY: adding ", typeToString(newbody), " for ", typeToString(result, preferDesc)
-    cl.c.typesWithOps.add((newbody, result))
+    #cl.c.typesWithOps.add((newbody, result))
     let mm = skipTypes(bbody, abstractPtrs)
     if tfFromGeneric notin mm.flags:
       # bug #5479, prevent endless recursions here:
@@ -593,7 +593,7 @@ proc replaceTypeVarsTAux(cl: var TReplTypeVars, t: PType): PType =
 
       of tySequence:
         if cl.isReturnType and cl.c.config.selectedGc == gcDestructors and result.destructor.isNil and
-            result[0].kind != tyEmpty:
+            result[0].kind != tyEmpty and optNimV2 notin cl.c.config.globalOptions:
           let s = cl.c.graph.sysTypes[tySequence]
           var old = copyType(s, s.owner, keepId=false)
           # Remove the 'T' parameter from tySequence:
@@ -682,4 +682,3 @@ proc prepareMetatypeForSigmatch*(p: PContext, pt: TIdTable, info: TLineInfo,
 template generateTypeInstance*(p: PContext, pt: TIdTable, arg: PNode,
                                t: PType): untyped =
   generateTypeInstance(p, pt, arg.info, t)
-

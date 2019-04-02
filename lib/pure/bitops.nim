@@ -154,25 +154,13 @@ proc fastlog2_nim(x: uint64): int {.inline, nosideeffect.} =
   v = v or v shr 32
   result = lookup[(v * 0x03F6EAF2CD271461'u64) shr 58].int
 
+# sets.nim cannot import bitops, but bitops can use include
+# system/sets to eleminate code duplication. sets.nim defines defines
+# countBits32 and countBits64.
+include system/sets
 
-proc countSetBits_nim(n: uint32): int {.inline, noSideEffect.} =
-  ## Counts the set bits in integer. (also called Hamming weight.)
-  # generic formula is from: https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
-
-  var v = uint32(n)
-  v = v - ((v shr 1) and 0x55555555)
-  v = (v and 0x33333333) + ((v shr 2) and 0x33333333)
-  result = (((v + (v shr 4) and 0xF0F0F0F) * 0x1010101) shr 24).int
-
-proc countSetBits_nim(n: uint64): int {.inline, noSideEffect.} =
-  ## Counts the set bits in integer. (also called Hamming weight.)
-  # generic formula is from: https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
-  var v = uint64(n)
-  v = v - ((v shr 1'u64) and 0x5555555555555555'u64)
-  v = (v and 0x3333333333333333'u64) + ((v shr 2'u64) and 0x3333333333333333'u64)
-  v = (v + (v shr 4'u64) and 0x0F0F0F0F0F0F0F0F'u64)
-  result = ((v * 0x0101010101010101'u64) shr 56'u64).int
-
+template countSetBits_nim(n: uint32): int = countBits32(n)
+template countSetBits_nim(n: uint64): int = countBits64(n)
 
 template parity_impl[T](value: T): int =
   # formula id from: https://graphics.stanford.edu/%7Eseander/bithacks.html#ParityParallel
@@ -446,3 +434,48 @@ proc rotateRightBits*(value: uint64;
   ## Right-rotate bits in a 64-bits value.
   let amount = amount and 63
   result = (value shr amount) or (value shl ( (-amount) and 63))
+
+proc repeatBits[T: SomeUnsignedInt](x: SomeUnsignedInt; retType: type[T]): T {.
+  noSideEffect.} =
+  result = x
+  var i = 1
+  while i != (sizeof(T) div sizeof(x)):
+    result = (result shl (sizeof(x)*8*i)) or result
+    i *= 2
+ 
+proc reverseBits*[T: SomeUnsignedInt](x: T): T {.noSideEffect.} =
+  ## Return the bit reversal of x.
+  runnableExamples:
+    doAssert reverseBits(0b10100100'u8) == 0b00100101'u8
+    doAssert reverseBits(0xdd'u8) == 0xbb'u8
+    doAssert reverseBits(0xddbb'u16) == 0xddbb'u16
+    doAssert reverseBits(0xdeadbeef'u32) == 0xf77db57b'u32
+
+  template repeat(x: SomeUnsignedInt): T = repeatBits(x, T)
+
+  result = x
+  result =
+    ((repeat(0x55u8) and result) shl 1) or
+    ((repeat(0xaau8) and result) shr 1)
+  result =
+    ((repeat(0x33u8) and result) shl 2) or
+    ((repeat(0xccu8) and result) shr 2)
+  when sizeof(T) == 1:
+    result = (result shl 4) or (result shr 4)
+  when sizeof(T) >= 2:
+    result =
+      ((repeat(0x0fu8) and result) shl 4) or
+      ((repeat(0xf0u8) and result) shr 4)
+  when sizeof(T) == 2:
+    result = (result shl 8) or (result shr 8)
+  when sizeof(T) >= 4:
+    result =
+      ((repeat(0x00ffu16) and result) shl 8) or
+      ((repeat(0xff00u16) and result) shr 8)
+  when sizeof(T) == 4:
+    result = (result shl 16) or (result shr 16)
+  when sizeof(T) == 8:
+    result =
+      ((repeat(0x0000ffffu32) and result) shl 16) or
+      ((repeat(0xffff0000u32) and result) shr 16)
+    result = (result shl 32) or (result shr 32)

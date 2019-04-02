@@ -91,7 +91,7 @@
 ## destroy(tmp.x); destroy(tmp.y)
 ##
 
-##[
+#[
 From https://github.com/nim-lang/Nim/wiki/Destructors
 
 Rule      Pattern                 Transformed into
@@ -117,7 +117,21 @@ Rule      Pattern                 Transformed into
 
 Rule 3.2 describes a "cursor" variable, a variable that is only used as a
 view into some data structure. See ``compiler/cursors.nim`` for details.
-]##
+
+Note: In order to avoid the very common combination ``reset(x); =sink(x, y)`` for
+variable definitions we must turn "the first sink/assignment" operation into a
+copyMem. This is harder than it looks:
+
+  while true:
+    try:
+      if cond: break # problem if we run destroy(x) here :-/
+      var x = f()
+    finally:
+      destroy(x)
+
+And the C++ optimizers don't sweat to optimize it for us, so we don't have
+to do it.
+]#
 
 import
   intsets, ast, astalgo, msgs, renderer, magicsys, types, idents, trees,
@@ -301,6 +315,10 @@ proc checkForErrorPragma(c: Con; t: PType; ri: PNode; opname: string) =
     if c.otherRead != nil:
       m.add "; another read is done here: "
       m.add c.graph.config $ c.otherRead.info
+    elif ri.kind == nkSym and ri.sym.kind == skParam and ri.sym.typ.kind != tySink:
+      m.add "; try to make "
+      m.add renderTree(ri)
+      m.add " a 'sink' parameter"
   localError(c.graph.config, ri.info, errGenerated, m)
 
 proc makePtrType(c: Con, baseType: PType): PType =
@@ -315,7 +333,7 @@ template genOp(opr, opname, ri) =
   elif op.ast[genericParamsPos].kind != nkEmpty:
     globalError(c.graph.config, dest.info, "internal error: '" & opname &
       "' operator is generic")
-  patchHead op
+  #patchHead op
   if sfError in op.flags: checkForErrorPragma(c, t, ri, opname)
   let addrExp = newNodeIT(nkHiddenAddr, dest.info, makePtrType(c, dest.typ))
   addrExp.add(dest)
@@ -329,7 +347,14 @@ proc genSink(c: Con; t: PType; dest, ri: PNode): PNode =
       echo t.sink.id, " owner ", t.id
       quit 1
   let t = t.skipTypes({tyGenericInst, tyAlias, tySink})
-  genOp(if t.sink != nil: t.sink else: t.assignment, "=sink", ri)
+  let op = if t.sink != nil: t.sink else: t.assignment
+  if op != nil:
+    genOp(op, "=sink", ri)
+  else:
+    # in rare cases only =destroy exists but no sink or assignment
+    # (see Pony object in tmove_objconstr.nim)
+    # we generate a fast assignment in this case:
+    result = newTree(nkFastAsgn, dest)
 
 proc genCopy(c: Con; t: PType; dest, ri: PNode): PNode =
   if tfHasOwned in t.flags:
@@ -573,6 +598,9 @@ proc moveOrCopy(dest, ri: PNode; c: var Con): PNode =
       else:
         ri2[i] = pArg(ri[i], c, isSink = true)
     result.add ri2
+  of nkNilLit:
+    result = genSink(c, dest.typ, dest, ri)
+    result.add ri
   of nkSym:
     if isSinkParam(ri.sym):
       # Rule 3: `=sink`(x, z); wasMoved(z)
@@ -683,10 +711,6 @@ proc p(n: PNode; c: var Con): PNode =
   of nkNone..nkNilLit, nkTypeSection, nkProcDef, nkConverterDef, nkMethodDef,
       nkIteratorDef, nkMacroDef, nkTemplateDef, nkLambda, nkDo, nkFuncDef:
     result = n
-  of nkDiscardStmt:
-    result = n
-    if n[0].typ != nil and hasDestructor(n[0].typ):
-      result = genDestroy(c, n[0].typ, n[0])
   of nkCast, nkHiddenStdConv, nkHiddenSubConv, nkConv:
     result = copyNode(n)
     # Destination type
@@ -700,6 +724,7 @@ proc p(n: PNode; c: var Con): PNode =
 proc injectDestructorCalls*(g: ModuleGraph; owner: PSym; n: PNode): PNode =
   when false: # defined(nimDebugDestroys):
     echo "injecting into ", n
+  if sfGeneratedOp in owner.flags: return n
   var c: Con
   c.owner = owner
   c.destroys = newNodeI(nkStmtList, n.info)
@@ -721,8 +746,8 @@ proc injectDestructorCalls*(g: ModuleGraph; owner: PSym; n: PNode): PNode =
       if param.typ.kind == tySink and hasDestructor(param.typ.sons[0]):
         c.destroys.add genDestroy(c, param.typ.skipTypes({tyGenericInst, tyAlias, tySink}), params[i])
 
-  if optNimV2 in c.graph.config.globalOptions:
-    injectDefaultCalls(n, c)
+  #if optNimV2 in c.graph.config.globalOptions:
+  #  injectDefaultCalls(n, c)
   let body = p(n, c)
   result = newNodeI(nkStmtList, n.info)
   if c.topLevelVars.len > 0:

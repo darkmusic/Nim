@@ -272,14 +272,6 @@ proc computeSizeAlign(conf: ConfigRef; typ: PType) =
       typ.align = szIllegalRecursion
       return
 
-    # recursive tuplers are not allowed and should be detected in the frontend
-    if base.kind == tyTuple:
-      computeSizeAlign(conf, base)
-      if base.size < 0:
-        typ.size = base.size
-        typ.align = base.align
-        return
-
     typ.align = int16(conf.target.ptrSize)
     if typ.kind == tySequence and conf.selectedGC == gcDestructors:
       typ.size = conf.target.ptrSize * 2
@@ -421,7 +413,7 @@ proc computeSizeAlign(conf: ConfigRef; typ: PType) =
       typ.size = typ.lastSon.size
       typ.align = typ.lastSon.align
 
-  of tyGenericInst, tyDistinct, tyGenericBody, tyAlias, tySink:
+  of tyGenericInst, tyDistinct, tyGenericBody, tyAlias, tySink, tyOwned:
     computeSizeAlign(conf, typ.lastSon)
     typ.size = typ.lastSon.size
     typ.align = typ.lastSon.align
