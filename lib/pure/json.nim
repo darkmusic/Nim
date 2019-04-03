@@ -143,7 +143,7 @@ runnableExamples:
 
 import
   hashes, tables, strutils, lexbase, streams, unicode, macros, parsejson,
-  typetraits
+  typetraits, options
 
 export
   tables.`$`
@@ -313,6 +313,24 @@ proc `%`*(s: string): JsonNode =
   result.kind = JString
   result.str = s
 
+proc `%`*(n: uint): JsonNode =
+  ## Generic constructor for JSON data. Creates a new `JInt JsonNode`.
+  new(result)
+  result.kind = JInt
+  result.num  = BiggestInt(n)
+
+proc `%`*(n: int): JsonNode =
+  ## Generic constructor for JSON data. Creates a new `JInt JsonNode`.
+  new(result)
+  result.kind = JInt
+  result.num  = n
+
+proc `%`*(n: BiggestUInt): JsonNode =
+  ## Generic constructor for JSON data. Creates a new `JInt JsonNode`.
+  new(result)
+  result.kind = JInt
+  result.num  = BiggestInt(n)
+
 proc `%`*(n: BiggestInt): JsonNode =
   ## Generic constructor for JSON data. Creates a new `JInt JsonNode`.
   new(result)
@@ -344,6 +362,16 @@ proc `%`*[T](elements: openArray[T]): JsonNode =
   result = newJArray()
   for elem in elements: result.add(%elem)
 
+proc `%`*[T](table: Table[string, T]|OrderedTable[string, T]): JsonNode =
+  ## Generic constructor for JSON data. Creates a new ``JObject JsonNode``.
+  result = newJObject()
+  for k, v in table: result[k] = %v
+
+proc `%`*[T](opt: Option[T]): JsonNode =
+  ## Generic constructor for JSON data. Creates a new ``JNull JsonNode``
+  ## if ``opt`` is empty, otherwise it delegates to the underlying value.
+  if opt.isSome: %opt.get else: newJNull()
+
 when false:
   # For 'consistency' we could do this, but that only pushes people further
   # into that evil comfort zone where they can use Nim without understanding it
@@ -362,22 +390,8 @@ proc `[]=`*(obj: JsonNode, key: string, val: JsonNode) {.inline.} =
   assert(obj.kind == JObject)
   obj.fields[key] = val
 
-#[
-Note: could use simply:
-proc `%`*(o: object|tuple): JsonNode
-but blocked by https://github.com/nim-lang/Nim/issues/10019
-]#
-proc `%`*(o: tuple): JsonNode =
-  ## Generic constructor for JSON data. Creates a new `JObject JsonNode`
-  when isNamedTuple(type(o)):
-    result = newJObject()
-    for k, v in o.fieldPairs: result[k] = %v
-  else:
-    result = newJArray()
-    for a in o.fields: result.add(%a)
-
-proc `%`*(o: object): JsonNode =
-  ## Generic constructor for JSON data. Creates a new `JObject JsonNode`
+proc `%`*[T: object](o: T): JsonNode =
+  ## Construct JsonNode from tuples and objects.
   result = newJObject()
   for k, v in o.fieldPairs: result[k] = %v
 
@@ -1009,10 +1023,7 @@ proc toIdentNode(typeNode: NimNode): NimNode =
 
 proc createGetEnumCall(jsonNode, kindType: NimNode): NimNode =
   # -> getEnum(`jsonNode`, `kindType`)
-  let getEnumSym = bindSym("getEnum")
-  let astStrLit = toStrLit(jsonNode)
-  let getEnumCall = newCall(getEnumSym, jsonNode, astStrLit, kindType)
-  return getEnumCall
+  result = newCall(bindSym("getEnum"), jsonNode, toStrLit(jsonNode), kindType)
 
 proc createOfBranchCond(ofBranch, getEnumCall: NimNode): NimNode =
   ## Creates an expression that acts as the condition for an ``of`` branch.
@@ -1696,7 +1707,6 @@ when isMainModule:
 
   # Test loading of file.
   when not defined(js):
-    echo("99% of tests finished. Going to try loading file.")
     var parsed = parseFile("tests/testdata/jsontest.json")
 
     try:
@@ -1730,6 +1740,8 @@ when isMainModule:
   doAssert($ %*[] == "[]")
   doAssert($ %*{} == "{}")
 
+  doAssert(not compiles(%{"error": "No messages"}))
+
   # bug #9111
   block:
     type
@@ -1747,17 +1759,37 @@ when isMainModule:
   # Generate constructors for range[T] types
   block:
     type
-      Q1 = range[0..10]
-      Q2 = range[0'i8..10'i8]
-      Q3 = range[0'u16..10'u16]
+      Q1 = range[0'u8  .. 50'u8]
+      Q2 = range[0'u16 .. 50'u16]
+      Q3 = range[0'u32 .. 50'u32]
+      Q4 = range[0'i8  .. 50'i8]
+      Q5 = range[0'i16 .. 50'i16]
+      Q6 = range[0'i32 .. 50'i32]
+      Q7 = range[0'f32 .. 50'f32]
+      Q8 = range[0'f64 .. 50'f64]
+      Q9 = range[0     .. 50]
+
       X = object
         m1: Q1
         m2: Q2
         m3: Q3
+        m4: Q4
+        m5: Q5
+        m6: Q6
+        m7: Q7
+        m8: Q8
+        m9: Q9
 
-    let
-      obj = X(m1: 1, m2: 2'i8, m3: 3'u16)
-      jsonObj = %obj
-      desObj = to(jsonObj, type(obj))
+    let obj = X(
+      m1: Q1(42),
+      m2: Q2(42),
+      m3: Q3(42),
+      m4: Q4(42),
+      m5: Q5(42),
+      m6: Q6(42),
+      m7: Q7(42),
+      m8: Q8(42),
+      m9: Q9(42)
+    )
 
-    doAssert(desObj == obj)
+    doAssert(obj == to(%obj, type(obj)))

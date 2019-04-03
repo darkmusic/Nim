@@ -35,6 +35,7 @@
 ##   `execShellCmd proc <#execShellCmd,string>`_
 ## * `parseopt module <parseopt.html>`_ for command-line parser beyond
 ##   `parseCmdLine proc <#parseCmdLine,string>`_
+## * `uri module <uri.html>`_
 ## * `distros module <distros.html>`_
 ## * `dynlib module <dynlib.html>`_
 ## * `streams module <streams.html>`_
@@ -115,13 +116,15 @@ proc joinPath*(head, tail: string): string {.
   ##
   ## If `head` is the empty string, `tail` is returned. If `tail` is the empty
   ## string, `head` is returned with a trailing path separator. If `tail` starts
-  ## with a path separator it will be removed when concatenated to `head`. Other
-  ## path separators not located on boundaries won't be modified.
+  ## with a path separator it will be removed when concatenated to `head`.
+  ## Path separators will be normalized.
   ##
   ## See also:
   ## * `joinPath(varargs) proc <#joinPath,varargs[string]>`_
   ## * `/ proc <#/,string,string>`_
   ## * `splitPath proc <#splitPath,string>`_
+  ## * `uri.combine proc <uri.html#combine,Uri,Uri>`_
+  ## * `uri./ proc <uri.html#/,Uri,string>`_
   runnableExamples:
     when defined(posix):
       assert joinPath("usr", "lib") == "usr/lib"
@@ -186,6 +189,8 @@ proc `/`*(head, tail: string): string {.noSideEffect.} =
   ## * `joinPath(head, tail) proc <#joinPath,string,string>`_
   ## * `joinPath(varargs) proc <#joinPath,varargs[string]>`_
   ## * `splitPath proc <#splitPath,string>`_
+  ## * `uri.combine proc <uri.html#combine,Uri,Uri>`_
+  ## * `uri./ proc <uri.html#/,Uri,string>`_
   runnableExamples:
     when defined(posix):
       assert "usr" / "" == "usr/"
@@ -496,7 +501,7 @@ proc splitFile*(path: string): tuple[dir, name, ext: string] {.
     assert ext == ""
 
   if path.len == 0:
-      result = ("", "", "")
+    result = ("", "", "")
   elif path[^1] in {DirSep, AltSep}:
     if path.len == 1:
       # issue #8255
@@ -1648,6 +1653,7 @@ proc moveFile*(source, dest: string) {.rtl, extern: "nos$1",
   ## Moves a file from `source` to `dest`.
   ##
   ## If this fails, `OSError` is raised.
+  ## If `dest` already exists, it will be overwritten.
   ##
   ## Can be used to `rename files`:idx:.
   ##
@@ -2551,7 +2557,7 @@ elif defined(windows):
       ownArgv = parseCmdLine($getCommandLine())
       ownParsedArgv = true
     if i < ownArgv.len and i >= 0: return TaintedString(ownArgv[i])
-    raise newException(IndexError, "invalid index")
+    raise newException(IndexError, formatErrorIndexBound(i, ownArgv.len-1))
 
 elif defined(genode):
   proc paramStr*(i: int): TaintedString =
@@ -2570,7 +2576,7 @@ elif not defined(createNimRtl) and
   proc paramStr*(i: int): TaintedString {.tags: [ReadIOEffect].} =
     # Docstring in nimdoc block.
     if i < cmdCount and i >= 0: return TaintedString($cmdLine[i])
-    raise newException(IndexError, "invalid index")
+    raise newException(IndexError, formatErrorIndexBound(i, cmdCount-1))
 
   proc paramCount*(): int {.tags: [ReadIOEffect].} =
     # Docstring in nimdoc block.

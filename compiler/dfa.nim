@@ -12,9 +12,8 @@
 ## make this easier to handle: There are only 2 different branching
 ## instructions: 'goto X' is an unconditional goto, 'fork X'
 ## is a conditional goto (either the next instruction or 'X' can be
-## taken). Exhaustive case statements could be translated
-## so that the last branch is transformed into an 'else' branch, but
-## this is currently not done.
+## taken). Exhaustive case statements are translated
+## so that the last branch is transformed into an 'else' branch.
 ## ``return`` and ``break`` are all covered by 'goto'.
 ##
 ## Control flow through exception handling:
@@ -595,8 +594,12 @@ proc genCall(c: var Con; n: PNode) =
   inc c.inCall
   for i in 1..<n.len:
     gen(c, n[i])
-    if t != nil and i < t.len and t.sons[i].kind == tyVar:
-      genDef(c, n[i])
+    when false:
+      if t != nil and i < t.len and t.sons[i].kind == tyVar:
+        # This is wrong! Pass by var is a 'might def', not a 'must def'
+        # like the other defs we emit. This is not good enough for a move
+        # optimizer.
+        genDef(c, n[i])
   # every call can potentially raise:
   if c.inTryStmt > 0 and canRaise(n[0]):
     # we generate the instruction sequence:
@@ -621,8 +624,9 @@ proc genMagic(c: var Con; n: PNode; m: TMagic) =
 
 proc genVarSection(c: var Con; n: PNode) =
   for a in n:
-    if a.kind == nkCommentStmt: continue
-    if a.kind == nkVarTuple:
+    if a.kind == nkCommentStmt:
+      discard
+    elif a.kind == nkVarTuple:
       gen(c, a.lastSon)
       for i in 0 .. a.len-3: genDef(c, a[i])
     else:
@@ -661,7 +665,7 @@ proc gen(c: var Con; n: PNode) =
   of nkReturnStmt: genReturn(c, n)
   of nkRaiseStmt: genRaise(c, n)
   of nkBreakStmt: genBreak(c, n)
-  of nkTryStmt: genTry(c, n)
+  of nkTryStmt, nkHiddenTryStmt: genTry(c, n)
   of nkStmtList, nkStmtListExpr, nkChckRangeF, nkChckRange64, nkChckRange,
      nkBracket, nkCurly, nkPar, nkTupleConstr, nkClosure, nkObjConstr:
     for x in n: gen(c, x)
@@ -682,42 +686,3 @@ proc constructCfg*(s: PSym; body: PNode): ControlFlowGraph =
   gen(c, body)
   genImplicitReturn(c)
   shallowCopy(result, c.code)
-
-proc interpret(code: ControlFlowGraph; pc: int, state: seq[PSym], comesFrom: int; threadId: int): (seq[PSym], int) =
-  var res = state
-  var pc = pc
-  while pc < code.len:
-    #echo threadId, " ", code[pc].kind
-    case code[pc].kind
-    of goto:
-      pc = pc + code[pc].dest
-    of fork:
-      let target = pc + code[pc].dest
-      let (branchA, pcA) = interpret(code, pc+1, res, pc, threadId+1)
-      let (branchB, _) = interpret(code, target, res, pc, threadId+2)
-      # we add vars if they are in both branches:
-      for v in branchB:
-        if v in branchA:
-          if v notin res:
-            res.add v
-      pc = pcA+1
-    of join:
-      let target = pc + code[pc].dest
-      if comesFrom == target: return (res, pc)
-      inc pc
-    of use:
-      let v = code[pc].sym
-      if v notin res and v.kind != skParam:
-        echo "attempt to read uninitialized variable ", v.name.s
-      inc pc
-    of def:
-      let v = code[pc].sym
-      if v notin res:
-        res.add v
-      inc pc
-  return (res, pc)
-
-proc dataflowAnalysis*(s: PSym; body: PNode) =
-  let c = constructCfg(s, body)
-  #echoCfg c
-  discard interpret(c, 0, @[], -1, 1)

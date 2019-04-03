@@ -239,6 +239,7 @@ proc notFoundError*(c: PContext, n: PNode, errors: CandidateErrors) =
   if c.config.m.errorOutputs == {}:
     # fail fast:
     globalError(c.config, n.info, "type mismatch")
+    return
   if errors.len == 0:
     localError(c.config, n.info, "expression '$1' cannot be called" % n[0].renderTree)
     return
@@ -481,6 +482,7 @@ proc semResolvedCall(c: PContext, x: TCandidate,
     result.sons[0] = newSymNode(finalCallee, getCallLineInfo(result.sons[0]))
     if containsGenericType(result.typ) or x.fauxMatch == tyUnknown:
       result.typ = newTypeS(x.fauxMatch, c)
+      if result.typ.kind == tyError: incl result.typ.flags, tfCheckedForDestructor
     return
   let gp = finalCallee.ast.sons[genericParamsPos]
   if gp.kind != nkEmpty:

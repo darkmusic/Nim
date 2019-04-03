@@ -34,7 +34,7 @@
 
 include "system/inclrtl"
 
-proc newEIO(msg: string): ref IOError =
+proc newEIO(msg: string): owned(ref IOError) =
   new(result)
   result.msg = msg
 
@@ -46,19 +46,24 @@ type
                                  ## accessible so that a stream implementation
                                  ## can override them.
     closeImpl*: proc (s: Stream)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
+      {.nimcall, raises: [Exception, IOError, OSError], tags: [WriteIOEffect], gcsafe.}
     atEndImpl*: proc (s: Stream): bool
       {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
     setPositionImpl*: proc (s: Stream, pos: int)
       {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
     getPositionImpl*: proc (s: Stream): int
       {.nimcall, raises: [Defect, IOError, OSError], tags: [], gcsafe.}
+
+    readDataStrImpl*: proc (s: Stream, buffer: var string, slice: Slice[int]): int
+      {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
+
     readDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int): int
       {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
     peekDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int): int
       {.nimcall, raises: [Defect, IOError, OSError], tags: [ReadIOEffect], gcsafe.}
     writeDataImpl*: proc (s: Stream, buffer: pointer, bufLen: int)
-      {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect], gcsafe.}
+        {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect], gcsafe.}
+
     flushImpl*: proc (s: Stream)
       {.nimcall, raises: [Defect, IOError, OSError], tags: [WriteIOEffect], gcsafe.}
 
@@ -86,6 +91,14 @@ proc getPosition*(s: Stream): int =
 proc readData*(s: Stream, buffer: pointer, bufLen: int): int =
   ## low level proc that reads data into an untyped `buffer` of `bufLen` size.
   result = s.readDataImpl(s, buffer, bufLen)
+
+proc readDataStr*(s: Stream, buffer: var string, slice: Slice[int]): int =
+  ## low level proc that reads data into a string ``buffer`` at ``slice``.
+  if s.readDataStrImpl != nil:
+    result = s.readDataStrImpl(s, buffer, slice)
+  else:
+    # fallback
+    result = s.readData(addr buffer[0], buffer.len)
 
 when not defined(js):
   proc readAll*(s: Stream): string =
@@ -344,6 +357,19 @@ when not defined(js):
     var s = StringStream(s)
     return s.pos
 
+  proc ssReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int =
+    var s = StringStream(s)
+    result = min(slice.b + 1 - slice.a, s.data.len - s.pos)
+    if result > 0:
+      when nimvm:
+        for i in 0 ..< result: # sorry, but no fast string splicing on the vm.
+          buffer[slice.a + i] = s.data[s.pos + i]
+      else:
+        copyMem(unsafeAddr buffer[slice.a], addr s.data[s.pos], result)
+      inc(s.pos, result)
+    else:
+      result = 0
+
   proc ssReadData(s: Stream, buffer: pointer, bufLen: int): int =
     var s = StringStream(s)
     result = min(bufLen, s.data.len - s.pos)
@@ -377,7 +403,7 @@ when not defined(js):
     else:
       s.data = nil
 
-  proc newStringStream*(s: string = ""): StringStream =
+  proc newStringStream*(s: string = ""): owned StringStream =
     ## creates a new stream from the string `s`.
     new(result)
     result.data = s
@@ -389,6 +415,7 @@ when not defined(js):
     result.readDataImpl = ssReadData
     result.peekDataImpl = ssPeekData
     result.writeDataImpl = ssWriteData
+    result.readDataStrImpl = ssReadDataStr
 
   type
     FileStream* = ref FileStreamObj ## a stream that encapsulates a `File`
@@ -407,6 +434,9 @@ when not defined(js):
   proc fsReadData(s: Stream, buffer: pointer, bufLen: int): int =
     result = readBuffer(FileStream(s).f, buffer, bufLen)
 
+  proc fsReadDataStr(s: Stream, buffer: var string, slice: Slice[int]): int =
+    result = readBuffer(FileStream(s).f, addr buffer[slice.a], slice.b + 1 - slice.a)
+
   proc fsPeekData(s: Stream, buffer: pointer, bufLen: int): int =
     let pos = fsGetPosition(s)
     defer: fsSetPosition(s, pos)
@@ -416,7 +446,7 @@ when not defined(js):
     if writeBuffer(FileStream(s).f, buffer, bufLen) != bufLen:
       raise newEIO("cannot write to stream")
 
-  proc newFileStream*(f: File): FileStream =
+  proc newFileStream*(f: File): owned FileStream =
     ## creates a new stream from the file `f`.
     new(result)
     result.f = f
@@ -424,12 +454,13 @@ when not defined(js):
     result.atEndImpl = fsAtEnd
     result.setPositionImpl = fsSetPosition
     result.getPositionImpl = fsGetPosition
+    result.readDataStrImpl = fsReadDataStr
     result.readDataImpl = fsReadData
     result.peekDataImpl = fsPeekData
     result.writeDataImpl = fsWriteData
     result.flushImpl = fsFlush
 
-  proc newFileStream*(filename: string, mode: FileMode = fmRead, bufSize: int = -1): FileStream =
+  proc newFileStream*(filename: string, mode: FileMode = fmRead, bufSize: int = -1): owned FileStream =
     ## creates a new stream from the file named `filename` with the mode `mode`.
     ## If the file cannot be opened, nil is returned. See the `system
     ## <system.html>`_ module for a list of available FileMode enums.
@@ -438,7 +469,7 @@ when not defined(js):
     var f: File
     if open(f, filename, mode, bufSize): result = newFileStream(f)
 
-  proc openFileStream*(filename: string, mode: FileMode = fmRead, bufSize: int = -1): FileStream =
+  proc openFileStream*(filename: string, mode: FileMode = fmRead, bufSize: int = -1): owned FileStream =
     ## creates a new stream from the file named `filename` with the mode `mode`.
     ## If the file cannot be opened, an IO exception is raised.
     var f: File
@@ -491,7 +522,7 @@ else:
         raise newEIO("cannot write to stream")
       inc(s.pos, bufLen)
 
-  proc newFileHandleStream*(handle: FileHandle): FileHandleStream =
+  proc newFileHandleStream*(handle: FileHandle): owned FileHandleStream =
     new(result)
     result.handle = handle
     result.pos = 0
@@ -504,7 +535,7 @@ else:
     result.writeData = hsWriteData
 
   proc newFileHandleStream*(filename: string,
-                            mode: FileMode): FileHandleStream =
+                            mode: FileMode): owned FileHandleStream =
     when defined(windows):
       discard
     else:
