@@ -1203,6 +1203,8 @@ proc typeSectionRightSidePass(c: PContext, n: PNode) =
       incl st.flags, tfRefsAnonObj
       let obj = newSym(skType, getIdent(c.cache, s.name.s & ":ObjectType"),
                               getCurrOwner(c), s.info)
+      if sfPure in s.flags:
+        obj.flags.incl sfPure
       obj.typ = st.lastSon
       st.lastSon.sym = obj
 
@@ -2118,7 +2120,7 @@ proc semStmtList(c: PContext, n: PNode, flags: TExprFlags): PNode =
             continue
 
         let verdict = semConstExpr(c, n[i])
-        if verdict.intVal == 0:
+        if verdict == nil or verdict.kind != nkIntLit or verdict.intVal == 0:
           localError(c.config, result.info, "concept predicate failed")
       of tyUnknown: continue
       else: discard

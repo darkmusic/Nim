@@ -373,6 +373,7 @@ proc closureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
     body.add newAsgnStmt(x, call)
   elif optNimV2 in c.graph.config.globalOptions:
     let xx = genBuiltin(c.graph, mAccessEnv, "accessEnv", x)
+    xx.typ = getSysType(c.graph, c.info, tyPointer)
     case c.kind
     of attachedSink:
       # we 'nil' y out afterwards so we *need* to take over its reference
@@ -389,6 +390,7 @@ proc closureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
 
 proc ownedClosureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
   let xx = genBuiltin(c.graph, mAccessEnv, "accessEnv", x)
+  xx.typ = getSysType(c.graph, c.info, tyPointer)
   var actions = newNodeI(nkStmtList, c.info)
   let elemType = t.lastSon
   discard addDestructorCall(c, elemType, newNodeI(nkStmtList, c.info), genDeref(xx))
@@ -608,7 +610,7 @@ proc createTypeBoundOps*(c: PContext; orig: PType; info: TLineInfo) =
   ## In the semantic pass this is called in strategic places
   ## to ensure we lift assignment, destructors and moves properly.
   ## The later 'injectdestructors' pass depends on it.
-  if orig == nil or {tfCheckedForDestructor, tfHasMeta} * orig.flags != {}: return
+  if orig == nil or {tfCheckedForDestructor, tfHasMeta} * orig.skipTypes({tyAlias}).flags != {}: return
   incl orig.flags, tfCheckedForDestructor
 
   let h = sighashes.hashType(orig, {CoType, CoConsiderOwned})
