@@ -13,10 +13,7 @@
 # included from sempass2.nim
 
 # Todo:
-# - specialize destructors for constant arrays of strings
-#   (they don't require any)
 # - use openArray instead of array to avoid over-specializations
-# - make 'owned' mean 'sink' in parameters
 
 import sighashes
 
@@ -74,6 +71,7 @@ proc liftBodyObj(c: var TLiftCtx; n, body, x, y: PNode) =
     # generate selector:
     var access = dotField(x, n[0].sym)
     caseStmt.add(access)
+    var emptyBranches = 0
     # copy the branches over, but replace the fields with the for loop body:
     for i in 1 ..< n.len:
       var branch = copyTree(n[i])
@@ -81,8 +79,10 @@ proc liftBodyObj(c: var TLiftCtx; n, body, x, y: PNode) =
       branch.sons[L-1] = newNodeI(nkStmtList, c.info)
 
       liftBodyObj(c, n[i].lastSon, branch.sons[L-1], x, y)
+      if branch.sons[L-1].len == 0: inc emptyBranches
       caseStmt.add(branch)
-    body.add(caseStmt)
+    if emptyBranches != n.len-1:
+      body.add(caseStmt)
   of nkRecList:
     for t in items(n): liftBodyObj(c, t, body, x, y)
   else:
@@ -266,7 +266,7 @@ proc newSeqCall(g: ModuleGraph; x, y: PNode): PNode =
 proc setLenStrCall(g: ModuleGraph; x, y: PNode): PNode =
   let lenCall = genBuiltin(g, mLengthStr, "len", y)
   lenCall.typ = getSysType(g, x.info, tyInt)
-  result = genBuiltin(g, mSetLengthStr, "setLen", genAddr(g, x))
+  result = genBuiltin(g, mSetLengthStr, "setLen", x) # genAddr(g, x))
   result.add lenCall
 
 proc setLenSeqCall(c: var TLiftCtx; t: PType; x, y: PNode): PNode =
@@ -274,7 +274,7 @@ proc setLenSeqCall(c: var TLiftCtx; t: PType; x, y: PNode): PNode =
   lenCall.typ = getSysType(c.graph, x.info, tyInt)
   var op = getSysMagic(c.graph, x.info, "setLen", mSetLengthSeq)
   op = c.c.instTypeBoundOp(c.c, op, t, c.info, attachedAsgn, 1)
-  result = newTree(nkCall, newSymNode(op, x.info), genAddr(c.graph, x), lenCall)
+  result = newTree(nkCall, newSymNode(op, x.info), x, lenCall)
 
 proc forallElements(c: var TLiftCtx; t: PType; body, x, y: PNode) =
   let i = declareCounter(c, body, firstOrd(c.graph.config, t))
@@ -309,13 +309,14 @@ proc seqOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
 proc strOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
   case c.kind
   of attachedAsgn, attachedDeepCopy:
+    body.add callCodegenProc(c.graph, "nimAsgnStrV2", c.info, genAddr(c.graph, x), y)
     # we generate:
     # setLen(dest, y.len)
     # var i = 0
     # while i < y.len: dest[i] = y[i]; inc(i)
     # This is usually more efficient than a destroy/create pair.
-    body.add setLenStrCall(c.graph, x, y)
-    forallElements(c, t, body, x, y)
+    #body.add setLenStrCall(c.graph, x, y)
+    #forallElements(c, t, body, x, y)
   of attachedSink:
     let moveCall = genBuiltin(c.graph, mMove, "move", x)
     moveCall.add y
@@ -333,7 +334,7 @@ proc weakrefOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
     body.add genIf(c, x, callCodegenProc(c.graph, "nimDecWeakRef", c.info, x))
     body.add newAsgnStmt(x, y)
   of attachedAsgn:
-    body.add callCodegenProc(c.graph, "nimIncWeakRef", c.info, y)
+    body.add genIf(c, y, callCodegenProc(c.graph, "nimIncWeakRef", c.info, y))
     body.add genIf(c, x, callCodegenProc(c.graph, "nimDecWeakRef", c.info, x))
     body.add newAsgnStmt(x, y)
   of attachedDestructor:
@@ -381,7 +382,9 @@ proc closureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
       body.add genIf(c, xx, callCodegenProc(c.graph, "nimDecWeakRef", c.info, xx))
       body.add newAsgnStmt(x, y)
     of attachedAsgn:
-      body.add callCodegenProc(c.graph, "nimIncWeakRef", c.info, y)
+      let yy = genBuiltin(c.graph, mAccessEnv, "accessEnv", y)
+      yy.typ = getSysType(c.graph, c.info, tyPointer)
+      body.add genIf(c, yy, callCodegenProc(c.graph, "nimIncWeakRef", c.info, yy))
       body.add genIf(c, xx, callCodegenProc(c.graph, "nimDecWeakRef", c.info, xx))
       body.add newAsgnStmt(x, y)
     of attachedDestructor:
@@ -393,7 +396,7 @@ proc ownedClosureOp(c: var TLiftCtx; t: PType; body, x, y: PNode) =
   xx.typ = getSysType(c.graph, c.info, tyPointer)
   var actions = newNodeI(nkStmtList, c.info)
   let elemType = t.lastSon
-  discard addDestructorCall(c, elemType, newNodeI(nkStmtList, c.info), genDeref(xx))
+  #discard addDestructorCall(c, elemType, newNodeI(nkStmtList, c.info), genDeref(xx))
   actions.add callCodegenProc(c.graph, "nimDestroyAndDispose", c.info, xx)
   case c.kind
   of attachedSink, attachedAsgn:
@@ -473,23 +476,12 @@ proc liftBodyAux(c: var TLiftCtx; t: PType; body, x, y: PNode) =
      tyTypeDesc, tyGenericInvocation, tyForward:
     #internalError(c.graph.config, c.info, "assignment requested for type: " & typeToString(t))
     discard
+  of tyVar, tyLent:
+    if c.kind != attachedDestructor:
+      liftBodyAux(c, lastSon(t), body, x, y)
   of tyOrdinal, tyRange, tyInferred,
-     tyGenericInst, tyStatic, tyVar, tyLent, tyAlias, tySink:
+     tyGenericInst, tyStatic, tyAlias, tySink:
     liftBodyAux(c, lastSon(t), body, x, y)
-
-proc newProcType(info: TLineInfo; owner: PSym): PType =
-  result = newType(tyProc, owner)
-  result.n = newNodeI(nkFormalParams, info)
-  rawAddSon(result, nil) # return type
-  # result.n[0] used to be `nkType`, but now it's `nkEffectList` because
-  # the effects are now stored in there too ... this is a bit hacky, but as
-  # usual we desperately try to save memory:
-  addSon(result.n, newNodeI(nkEffectList, info))
-
-proc addParam(procType: PType; param: PSym) =
-  param.position = procType.len-1
-  addSon(procType.n, newSymNode(param))
-  rawAddSon(procType, param.typ)
 
 proc liftBodyDistinctType(c: PContext; typ: PType; kind: TTypeAttachedOp; info: TLineInfo): PSym =
   assert typ.kind == tyDistinct
@@ -606,6 +598,8 @@ template inst(field, t) =
     if field.ast != nil:
       patchBody(c, field.ast, info)
 
+proc isTrival(s: PSym): bool {.inline.} = s == nil or s.ast[bodyPos].len == 0
+
 proc createTypeBoundOps*(c: PContext; orig: PType; info: TLineInfo) =
   ## In the semantic pass this is called in strategic places
   ## to ensure we lift assignment, destructors and moves properly.
@@ -647,3 +641,8 @@ proc createTypeBoundOps*(c: PContext; orig: PType; info: TLineInfo) =
     orig.destructor = canon.destructor
     orig.assignment = canon.assignment
     orig.sink = canon.sink
+
+  if not isTrival(orig.destructor):
+    #or not isTrival(orig.assignment) or
+    # not isTrival(orig.sink):
+    orig.flags.incl tfHasAsgn

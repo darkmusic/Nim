@@ -70,7 +70,7 @@ type
     tags: PNode # list of tags
     bottom, inTryStmt: int
     owner: PSym
-    owner_module: PSym
+    ownerModule: PSym
     init: seq[int] # list of initialized variables
     guards: TModel # nested guards
     locked: seq[PNode] # locked locations
@@ -705,11 +705,11 @@ proc track(tracked: PEffects, n: PNode) =
     # p's effects are ours too:
     var a = n.sons[0]
     let op = a.typ
-    if getConstExpr(tracked.owner_module, n, tracked.graph) != nil:
+    if getConstExpr(tracked.ownerModule, n, tracked.graph) != nil:
       return
-    if op != nil:
-      if tracked.owner.kind != skMacro:
-        createTypeBoundOps(tracked.c, op, n.info)
+    if n.typ != nil:
+      if tracked.owner.kind != skMacro and n.typ.skipTypes(abstractVar).kind != tyOpenArray:
+        createTypeBoundOps(tracked.c, n.typ, n.info)
     if a.kind == nkCast and a[1].typ.kind == tyProc:
       a = a[1]
     # XXX: in rare situations, templates and macros will reach here after
@@ -821,7 +821,16 @@ proc track(tracked: PEffects, n: PNode) =
   of nkForStmt, nkParForStmt:
     # we are very conservative here and assume the loop is never executed:
     let oldState = tracked.init.len
-    for i in 0 ..< len(n):
+    for i in 0 .. len(n)-3:
+      let it = n[i]
+      track(tracked, it)
+      if tracked.owner.kind != skMacro:
+        if it.kind == nkVarTuple:
+          for x in it:
+            createTypeBoundOps(tracked.c, x.typ, x.info)
+        else:
+          createTypeBoundOps(tracked.c, it.typ, it.info)
+    for i in len(n)-2..len(n)-1:
       track(tracked, n.sons[i])
     setLen(tracked.init, oldState)
   of nkObjConstr:
@@ -941,7 +950,7 @@ proc initEffects(g: ModuleGraph; effects: PNode; s: PSym; t: var TEffects; c: PC
   t.exc = effects.sons[exceptionEffects]
   t.tags = effects.sons[tagEffects]
   t.owner = s
-  t.owner_module = s.getModule
+  t.ownerModule = s.getModule
   t.init = @[]
   t.guards.s = @[]
   t.guards.o = initOperators(g)
