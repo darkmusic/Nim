@@ -17,13 +17,16 @@ Some of these are not covered by the ``.experimental`` pragma or
 one may want to use Nim libraries using these features without using them
 oneself.
 
+**Note**: Unless otherwise indicated, these features are not to be removed,
+but refined and overhauled.
+
 
 Package level objects
 =====================
 
 Every Nim module resides in a (nimble) package. An object type can be attached
 to the package it resides in. If that is done, the type can be referenced from
-other modules as an `incomplete`:idx: object type. This features allows to
+other modules as an `incomplete`:idx: object type. This feature allows to
 break up recursive type dependencies accross module boundaries. Incomplete
 object types are always passed ``byref`` and can only be used in pointer like
 contexts (``var/ref/ptr IncompleteObject``) in general since the compiler does
@@ -486,9 +489,9 @@ The concept types can be parametric just like the regular generic types:
     M.data[m * M.N + n] = v
 
   # Adapt the Matrix type to the concept's requirements
-  template Rows*(M: type Matrix): int = M.M
-  template Cols*(M: type Matrix): int = M.N
-  template ValueType*(M: type Matrix): type = M.T
+  template Rows*(M: typedesc[Matrix]): int = M.M
+  template Cols*(M: typedesc[Matrix]): int = M.N
+  template ValueType*(M: typedesc[Matrix]): typedesc = M.T
 
   -------------
   ### usage.nim
@@ -1606,3 +1609,28 @@ validation errors:
 
 If the taint mode is turned off, ``TaintedString`` is simply an alias for
 ``string``.
+
+
+Aliasing restrictions in parameter passing
+==========================================
+
+**Note**: The aliasing restrictions are currently not enforced by the
+implementation and need to be fleshed out futher.
+
+"Aliasing" here means that the underlying storage locations overlap in memory
+at runtime. An "output parameter" is a parameter of type ``var T``, an input
+parameter is any parameter that is not of type ``var``.
+
+1. Two output parameters should never be aliased.
+2. An input and an output parameter should not be aliased.
+3. An output parameter should never be aliased with a global or thread local
+   variable referenced by the called proc.
+4. An input parameter should not be aliased with a global or thread local
+   variable updated by the called proc.
+
+One problem with rules 3 and 4 is that they affect specific global or thread
+local variables, but Nim's effect tracking only tracks "uses no global variable"
+via ``.noSideEffect``. The rules 3 and 4 can also be approximated by a different rule:
+
+5. A global or thread local variable (or a location derived from such a location)
+   can only passed to a parameter of a ``.noSideEffect`` proc.

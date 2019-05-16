@@ -202,19 +202,19 @@ macro ropecg(m: BModule, frmt: static[FormatStr], args: untyped): Rope =
 
 proc indentLine(p: BProc, r: Rope): Rope =
   result = r
-  for i in countup(0, p.blocks.len-1):
+  for i in 0 ..< p.blocks.len:
     prepend(result, "\t".rope)
 
 template appcg(m: BModule, c: var Rope, frmt: FormatStr,
-           args: varargs[untyped]) =
+           args: untyped) =
   add(c, ropecg(m, frmt, args))
 
 template appcg(m: BModule, sec: TCFileSection, frmt: FormatStr,
-           args: varargs[untyped]) =
+           args: untyped) =
   add(m.s[sec], ropecg(m, frmt, args))
 
 template appcg(p: BProc, sec: TCProcSection, frmt: FormatStr,
-           args: varargs[untyped]) =
+           args: untyped) =
   add(p.s(sec), ropecg(p.module, frmt, args))
 
 template line(p: BProc, sec: TCProcSection, r: Rope) =
@@ -224,7 +224,7 @@ template line(p: BProc, sec: TCProcSection, r: string) =
   add(p.s(sec), indentLine(p, r.rope))
 
 template lineF(p: BProc, sec: TCProcSection, frmt: FormatStr,
-              args: openarray[Rope]) =
+              args: untyped) =
   add(p.s(sec), indentLine(p, frmt % args))
 
 template lineCg(p: BProc, sec: TCProcSection, frmt: FormatStr,
@@ -440,6 +440,15 @@ proc getTemp(p: BProc, t: PType, result: var TLoc; needsInit=false) =
   result.flags = {}
   constructLoc(p, result, not needsInit)
 
+proc getTempCpp(p: BProc, t: PType, result: var TLoc; value: Rope) =
+  inc(p.labels)
+  result.r = "T" & rope(p.labels) & "_"
+  linefmt(p, cpsStmts, "$1 $2 = $3;$n", [getTypeDesc(p.module, t), result.r, value])
+  result.k = locTemp
+  result.lode = lodeTyp t
+  result.storage = OnStack
+  result.flags = {}
+
 proc getIntTemp(p: BProc, result: var TLoc) =
   inc(p.labels)
   result.r = "T" & rope(p.labels) & "_"
@@ -484,7 +493,7 @@ proc localVarDecl(p: BProc; n: PNode): Rope =
     add(result, " ")
     add(result, s.loc.r)
   else:
-    result = s.cgDeclFrmt % [result, s.loc.r]
+    result = runtimeFormat(s.cgDeclFrmt, [result, s.loc.r])
 
 proc assignLocalVar(p: BProc, n: PNode) =
   #assert(s.loc.k == locNone) # not yet assigned
@@ -535,7 +544,7 @@ proc assignGlobalVar(p: BProc, n: PNode) =
         if sfVolatile in s.flags: add(decl, " volatile")
         addf(decl, " $1;$n", [s.loc.r])
       else:
-        decl = (s.cgDeclFrmt & ";$n") % [td, s.loc.r]
+        decl = runtimeFormat(s.cgDeclFrmt & ";$n", [td, s.loc.r])
       add(p.module.s[cfsVars], decl)
   if p.withinLoop > 0:
     # fixes tests/run/tzeroarray:
@@ -655,7 +664,7 @@ proc loadDynamicLib(m: BModule, lib: PLib) =
       libCandidates(lib.path.strVal, s)
       rawMessage(m.config, hintDependency, lib.path.strVal)
       var loadlib: Rope = nil
-      for i in countup(0, high(s)):
+      for i in 0 .. high(s):
         inc(m.labels)
         if i > 0: add(loadlib, "||")
         let n = newStrNode(nkStrLit, s[i])
@@ -995,7 +1004,7 @@ proc genProcAux(m: BModule, prc: PSym) =
         #incl(res.loc.flags, lfIndirect)
         res.loc.storage = OnUnknown
 
-  for i in countup(1, sonsLen(prc.typ.n) - 1):
+  for i in 1 ..< sonsLen(prc.typ.n):
     let param = prc.typ.n.sons[i].sym
     if param.typ.isCompileTimeOnly: continue
     assignParam(p, param, prc.typ[0])
@@ -1686,13 +1695,12 @@ proc genModule(m: BModule, cfile: Cfile): Rope =
   result = getFileHeader(m.config, cfile)
   result.add(genMergeInfo(m))
 
-  if m.config.cppCustomNamespace.len > 0:
-    result.add openNamespaceNim(m.config.cppCustomNamespace)
-
   generateThreadLocalStorage(m)
   generateHeaders(m)
   add(result, genSectionStart(cfsHeaders, m.config))
   add(result, m.s[cfsHeaders])
+  if m.config.cppCustomNamespace.len > 0:
+    result.add openNamespaceNim(m.config.cppCustomNamespace)
   add(result, genSectionEnd(cfsHeaders, m.config))
   add(result, genSectionStart(cfsFrameDefines, m.config))
   if m.s[cfsFrameDefines].len > 0:
@@ -1701,7 +1709,7 @@ proc genModule(m: BModule, cfile: Cfile): Rope =
     add(result, "#define nimfr_(x, y)\n#define nimln_(x, y)\n")
   add(result, genSectionEnd(cfsFrameDefines, m.config))
 
-  for i in countup(cfsForwardTypes, cfsProcs):
+  for i in cfsForwardTypes .. cfsProcs:
     if m.s[i].len > 0:
       moduleIsEmpty = false
       add(result, genSectionStart(i, m.config))
@@ -1802,7 +1810,7 @@ proc writeHeader(m: BModule) =
   generateHeaders(m)
 
   generateThreadLocalStorage(m)
-  for i in countup(cfsHeaders, cfsProcs):
+  for i in cfsHeaders .. cfsProcs:
     add(result, genSectionStart(i, m.config))
     add(result, m.s[i])
     add(result, genSectionEnd(i, m.config))
@@ -1890,7 +1898,6 @@ proc shouldRecompile(m: BModule; code: Rope, cfile: Cfile): bool =
 # it would generate multiple 'main' procs, for instance.
 
 proc writeModule(m: BModule, pending: bool) =
-  # generate code for the init statements of the module:
   let cfile = getCFile(m)
 
   if true or optForceFullMake in m.config.globalOptions:
@@ -1902,7 +1909,8 @@ proc writeModule(m: BModule, pending: bool) =
       add(m.s[cfsProcHeaders], m.g.mainModProcs)
       generateThreadVarsSize(m)
 
-    var cf = Cfile(cname: cfile, obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
+    var cf = Cfile(nimname: m.module.name.s, cname: cfile,
+                   obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
     var code = genModule(m, cf)
     if code != nil:
       when hasTinyCBackend:
@@ -1913,7 +1921,8 @@ proc writeModule(m: BModule, pending: bool) =
       if not shouldRecompile(m, code, cf): cf.flags = {CfileFlag.Cached}
       addFileToCompile(m.config, cf)
   elif pending and mergeRequired(m) and sfMainModule notin m.module.flags:
-    let cf = Cfile(cname: cfile, obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
+    let cf = Cfile(nimname: m.module.name.s, cname: cfile,
+                   obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
     mergeFiles(cfile, m)
     genInitCode(m)
     finishTypeDescriptions(m)
@@ -1926,14 +1935,16 @@ proc writeModule(m: BModule, pending: bool) =
     # Consider: first compilation compiles ``system.nim`` and produces
     # ``system.c`` but then compilation fails due to an error. This means
     # that ``system.o`` is missing, so we need to call the C compiler for it:
-    var cf = Cfile(cname: cfile, obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
+    var cf = Cfile(nimname: m.module.name.s, cname: cfile,
+                   obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
     if not fileExists(cf.obj): cf.flags = {CfileFlag.Cached}
     addFileToCompile(m.config, cf)
   close(m.ndi)
 
 proc updateCachedModule(m: BModule) =
   let cfile = getCFile(m)
-  var cf = Cfile(cname: cfile, obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
+  var cf = Cfile(nimname: m.module.name.s, cname: cfile,
+                 obj: completeCFilePath(m.config, toObjFile(m.config, cfile)), flags: {})
 
   if mergeRequired(m) and sfMainModule notin m.module.flags:
     mergeFiles(cfile, m)
@@ -1954,6 +1965,9 @@ proc myClose(graph: ModuleGraph; b: PPassContext, n: PNode): PNode =
   result = n
   if b == nil: return
   var m = BModule(b)
+  if sfMainModule in m.module.flags:
+    for destructorCall in graph.globalDestructors:
+      n.add destructorCall
   if passes.skipCodegen(m.config, n): return
   # if the module is cached, we don't regenerate the main proc
   # nor the dispatchers? But if the dispatchers changed?

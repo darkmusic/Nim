@@ -370,13 +370,13 @@ proc libNameTmpl(conf: ConfigRef): string {.inline.} =
 proc nameToCC*(name: string): TSystemCC =
   ## Returns the kind of compiler referred to by `name`, or ccNone
   ## if the name doesn't refer to any known compiler.
-  for i in countup(succ(ccNone), high(TSystemCC)):
+  for i in succ(ccNone) .. high(TSystemCC):
     if cmpIgnoreStyle(name, CC[i].name) == 0:
       return i
   result = ccNone
 
 proc isVSCompatible*(conf: ConfigRef): bool =
-  return conf.cCompiler == ccVcc or 
+  return conf.cCompiler == ccVcc or
           conf.cCompiler == ccClangCl or
           (conf.cCompiler == ccIcl and conf.target.hostOS in osDos..osWindows)
 
@@ -412,7 +412,7 @@ proc setCC*(conf: ConfigRef; ccname: string; info: TLineInfo) =
   conf.compileOptions = getConfigVar(conf, conf.cCompiler, ".options.always")
   conf.linkOptions = ""
   conf.ccompilerpath = getConfigVar(conf, conf.cCompiler, ".path")
-  for i in countup(low(CC), high(CC)): undefSymbol(conf.symbols, CC[i].name)
+  for i in low(CC) .. high(CC): undefSymbol(conf.symbols, CC[i].name)
   defineSymbol(conf.symbols, CC[conf.cCompiler].name)
 
 proc addOpt(dest: var string, src: string) =
@@ -434,7 +434,7 @@ proc addCompileOptionCmd*(conf: ConfigRef; option: string) =
 
 proc initVars*(conf: ConfigRef) =
   # we need to define the symbol here, because ``CC`` may have never been set!
-  for i in countup(low(CC), high(CC)): undefSymbol(conf.symbols, CC[i].name)
+  for i in low(CC) .. high(CC): undefSymbol(conf.symbols, CC[i].name)
   defineSymbol(conf.symbols, CC[conf.cCompiler].name)
   addCompileOption(conf, getConfigVar(conf, conf.cCompiler, ".options.always"))
   #addLinkOption(getConfigVar(cCompiler, ".options.linker"))
@@ -504,30 +504,29 @@ proc noAbsolutePaths(conf: ConfigRef): bool {.inline.} =
   # `optGenMapping` is included here for niminst.
   result = conf.globalOptions * {optGenScript, optGenMapping} != {}
 
-proc cFileSpecificOptions(conf: ConfigRef; cfilename: AbsoluteFile): string =
+proc cFileSpecificOptions(conf: ConfigRef; nimname: string): string =
   result = conf.compileOptions
   for option in conf.compileOptionsCmd:
     if strutils.find(result, option, 0) < 0:
       addOpt(result, option)
 
-  let trunk = splitFile(cfilename).name
   if optCDebug in conf.globalOptions:
-    let key = trunk & ".debug"
+    let key = nimname & ".debug"
     if existsConfigVar(conf, key): addOpt(result, getConfigVar(conf, key))
     else: addOpt(result, getDebug(conf, conf.cCompiler))
   if optOptimizeSpeed in conf.options:
-    let key = trunk & ".speed"
+    let key = nimname & ".speed"
     if existsConfigVar(conf, key): addOpt(result, getConfigVar(conf, key))
     else: addOpt(result, getOptSpeed(conf, conf.cCompiler))
   elif optOptimizeSize in conf.options:
-    let key = trunk & ".size"
+    let key = nimname & ".size"
     if existsConfigVar(conf, key): addOpt(result, getConfigVar(conf, key))
     else: addOpt(result, getOptSize(conf, conf.cCompiler))
-  let key = trunk & ".always"
+  let key = nimname & ".always"
   if existsConfigVar(conf, key): addOpt(result, getConfigVar(conf, key))
 
 proc getCompileOptions(conf: ConfigRef): string =
-  result = cFileSpecificOptions(conf, AbsoluteFile"__dummy__")
+  result = cFileSpecificOptions(conf, "__dummy__")
 
 proc getLinkOptions(conf: ConfigRef): string =
   result = conf.linkOptions & " " & conf.linkOptionsCmd & " "
@@ -557,7 +556,7 @@ proc getLinkerExe(conf: ConfigRef; compiler: TSystemCC): string =
 
 proc getCompileCFileCmd*(conf: ConfigRef; cfile: Cfile, isMainFile = false): string =
   var c = conf.cCompiler
-  var options = cFileSpecificOptions(conf, cfile.cname)
+  var options = cFileSpecificOptions(conf, cfile.nimname)
   var exe = getConfigVar(conf, c, ".exe")
   if exe.len == 0: exe = getCompilerExe(conf, c, cfile.cname)
 
@@ -647,7 +646,7 @@ proc addExternalFileToCompile*(conf: ConfigRef; c: var Cfile) =
   conf.toCompile.add(c)
 
 proc addExternalFileToCompile*(conf: ConfigRef; filename: AbsoluteFile) =
-  var c = Cfile(cname: filename,
+  var c = Cfile(nimname: splitFile(filename).name, cname: filename,
     obj: toObjFile(conf, completeCFilePath(conf, filename, false)),
     flags: {CfileFlag.External})
   addExternalFileToCompile(conf, c)
@@ -663,7 +662,7 @@ proc compileCFiles(conf: ConfigRef; list: CFileList, script: var Rope, cmds: var
     if optCompileOnly notin conf.globalOptions:
       add(cmds, compileCmd)
       let (_, name, _) = splitFile(it.cname)
-      add(prettyCmds, if hintCC in conf.notes: "CC: " & name else: "")
+      add(prettyCmds, if hintCC in conf.notes: "CC: " & demanglePackageName(name) else: "")
     if optGenScript in conf.globalOptions:
       add(script, compileCmd)
       add(script, "\n")
@@ -738,7 +737,7 @@ proc getLinkCmd(conf: ConfigRef; output: AbsoluteFile,
     # way of being able to debug and rebuild the program at the same time. This
     # is accomplished using the /PDB:<filename> flag (there also exists the
     # /PDBALTPATH:<filename> flag). The only downside is that the .pdb files are
-    # atleast 300kb big (when linking statically to the runtime - or else 5mb+) 
+    # atleast 300kb big (when linking statically to the runtime - or else 5mb+)
     # and will quickly accumulate. There is a hacky solution: we could try to
     # delete all .pdb files with a pattern and swallow exceptions.
     #
@@ -787,7 +786,7 @@ proc execCmdsInParallel(conf: ConfigRef; cmds: seq[string]; prettyCb: proc (idx:
   if conf.numberOfProcessors == 0: conf.numberOfProcessors = countProcessors()
   var res = 0
   if conf.numberOfProcessors <= 1:
-    for i in countup(0, high(cmds)):
+    for i in 0 .. high(cmds):
       tryExceptOSErrorMessage(conf, "invocation of external compiler program failed."):
         res = execWithEcho(conf, cmds[i])
       if res != 0:
@@ -910,7 +909,8 @@ proc callCCompiler*(conf: ConfigRef) =
                        else: AbsoluteFile(conf.projectName)
       linkCmd = getLinkCmd(conf, mainOutput, objfiles)
       if optCompileOnly notin conf.globalOptions:
-        if defined(windows) and linkCmd.len > 8_000:
+        const MaxCmdLen = when defined(windows): 8_000 else: 32_000
+        if linkCmd.len > MaxCmdLen:
           # Windows's command line limit is about 8K (don't laugh...) so C compilers on
           # Windows support a feature where the command line can be passed via ``@linkcmd``
           # to them.

@@ -26,6 +26,8 @@ previous settings):
    ``$project.nim``. This file can be skipped with the same
    ``--skipProjCfg`` command line option.
 
+For available procs and implementation details see `nimscript <nimscript.html>`_.
+
 Limitations
 =================================
 
@@ -42,7 +44,7 @@ NimScript is subject to some limitations caused by the implementation of the VM
 * ``var T`` function arguments rely on ``ptr`` operations internally and might
   also be problematic in some cases.
 
-* More than one level of `ref` is generally not supported (for example, the type 
+* More than one level of `ref` is generally not supported (for example, the type
   `ref ref int`).
 
 * multimethods are not available.
@@ -134,7 +136,7 @@ Standalone NimScript
 ====================
 
 NimScript can also be used directly as a portable replacement for Bash and
-Batch files. Use ``nim e myscript.nims`` to run ``myscript.nims``. For example,
+Batch files. Use ``nim myscript.nims`` to run ``myscript.nims``. For example,
 installation of Nimble could be accomplished with this simple script:
 
 .. code-block:: nim
@@ -152,7 +154,7 @@ installation of Nimble could be accomplished with this simple script:
 
   mvFile "nimble" & $id & "/src/nimble".toExe, "bin/nimble".toExe
 
-You can also use the shebang ``#!/usr/bin/env nim``, as long as your filename
+On Unix, you can also use the shebang ``#!/usr/bin/env nim``, as long as your filename
 ends with ``.nims``:
 
 .. code-block:: nim
@@ -161,3 +163,5 @@ ends with ``.nims``:
   mode = ScriptMode.Silent
 
   echo "hello world"
+
+Use ``#!/usr/bin/env -S nim --hints:off`` to disable hints.

@@ -124,6 +124,12 @@ proc initCandidate*(ctx: PContext, c: var TCandidate, callee: PType) =
   initIdTable(c.bindings)
 
 proc put(c: var TCandidate, key, val: PType) {.inline.} =
+  when false:
+    let old = PType(idTableGet(c.bindings, key))
+    if old != nil:
+      echo "Putting ", typeToString(key), " ", typeToString(val), " and old is ", typeToString(old)
+      if typeToString(old) == "seq[string]":
+        writeStackTrace()
   idTablePut(c.bindings, key, val.skipIntLit)
 
 proc initCandidate*(ctx: PContext, c: var TCandidate, callee: PSym,
@@ -214,7 +220,7 @@ proc sumGeneric(t: PType): int =
       break
     of tyStatic:
       return t.sons[0].sumGeneric + 1
-    of tyGenericParam, tyExpr, tyStmt: break
+    of tyGenericParam, tyUntyped, tyTyped: break
     of tyAlias, tySink: t = t.lastSon
     of tyBool, tyChar, tyEnum, tyObject, tyPointer,
         tyString, tyCString, tyInt..tyInt64, tyFloat..tyFloat128,
@@ -295,7 +301,7 @@ proc argTypeToString(arg: PNode; prefer: TPreferedDesc): string =
 proc describeArgs*(c: PContext, n: PNode, startIdx = 1;
                    prefer: TPreferedDesc = preferName): string =
   result = ""
-  for i in countup(startIdx, n.len - 1):
+  for i in startIdx ..< n.len:
     var arg = n.sons[i]
     if n.sons[i].kind == nkExprEqExpr:
       add(result, renderTree(n.sons[i].sons[0]))
@@ -435,7 +441,7 @@ proc handleFloatRange(f, a: PType): TTypeRelation =
 proc genericParamPut(c: var TCandidate; last, fGenericOrigin: PType) =
   if fGenericOrigin != nil and last.kind == tyGenericInst and
      last.len-1 == fGenericOrigin.len:
-   for i in countup(1, sonsLen(fGenericOrigin) - 1):
+   for i in 1 ..< sonsLen(fGenericOrigin):
      let x = PType(idTableGet(c.bindings, fGenericOrigin.sons[i]))
      if x == nil:
        put(c, fGenericOrigin.sons[i], last.sons[i])
@@ -517,12 +523,12 @@ proc recordRel(c: var TCandidate, f, a: PType): TTypeRelation =
     result = isEqual
     let firstField = if f.kind == tyTuple: 0
                      else: 1
-    for i in countup(firstField, sonsLen(f) - 1):
+    for i in firstField ..< sonsLen(f):
       var m = typeRel(c, f.sons[i], a.sons[i])
       if m < isSubtype: return isNone
       result = minRel(result, m)
     if f.n != nil and a.n != nil:
-      for i in countup(0, sonsLen(f.n) - 1):
+      for i in 0 ..< sonsLen(f.n):
         # check field names:
         if f.n.sons[i].kind != nkSym: return isNone
         elif a.n.sons[i].kind != nkSym: return isNone
@@ -988,7 +994,7 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
   result = isNone
   assert(f != nil)
 
-  if f.kind == tyExpr:
+  if f.kind == tyUntyped:
     if aOrig != nil: put(c, f, aOrig)
     return isGeneric
 
@@ -1215,7 +1221,7 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
     if f.kind == tyVarargs:
       if tfVarargs in a.flags:
         return typeRel(c, f.base, a.lastSon)
-      if f.sons[0].kind == tyStmt: return
+      if f.sons[0].kind == tyTyped: return
 
     template matchArrayOrSeq(aBase: PType) =
       let ff = f.base
@@ -1484,7 +1490,7 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
     elif x.kind == tyGenericInst and
           ((f.sons[0] == x.sons[0]) or isGenericSubType(c, x, f, depth)) and
           (sonsLen(x) - 1 == sonsLen(f)):
-      for i in countup(1, sonsLen(f) - 1):
+      for i in 1 ..< sonsLen(f):
         if x.sons[i].kind == tyGenericParam:
           internalError(c.c.graph.config, "wrong instantiated type!")
         elif typeRel(c, f.sons[i], x.sons[i]) <= isSubtype:
@@ -1513,14 +1519,19 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
         # var it1 = internalFind(root, 312) # cannot instantiate: 'D'
         #
         # we steal the generic parameters from the tyGenericBody:
-        for i in countup(1, sonsLen(f) - 1):
+        for i in 1 ..< sonsLen(f):
           let x = PType(idTableGet(c.bindings, genericBody.sons[i-1]))
           if x == nil:
             discard "maybe fine (for eg. a==tyNil)"
           elif x.kind in {tyGenericInvocation, tyGenericParam}:
             internalError(c.c.graph.config, "wrong instantiated type!")
           else:
-            put(c, f.sons[i], x)
+            let key = f.sons[i]
+            let old = PType(idTableGet(c.bindings, key))
+            if old == nil:
+              put(c, key, x)
+            elif typeRel(c, old, x, flags + {trDontBind}) == isNone:
+              return isNone
 
       if result == isNone:
         # Here object inheriting from generic/specialized generic object
@@ -1770,7 +1781,7 @@ proc typeRelImpl(c: var TCandidate, f, aOrig: PType,
       else:
         result = isNone
 
-  of tyStmt:
+  of tyTyped:
     if aOrig != nil:
       put(c, f, aOrig)
     result = isGeneric
@@ -1830,7 +1841,7 @@ proc implicitConv(kind: TNodeKind, f: PType, arg: PNode, m: TCandidate,
 proc userConvMatch(c: PContext, m: var TCandidate, f, a: PType,
                    arg: PNode): PNode =
   result = nil
-  for i in countup(0, len(c.converters) - 1):
+  for i in 0 ..< len(c.converters):
     var src = c.converters[i].typ.sons[1]
     var dest = c.converters[i].typ.sons[0]
     # for generic type converters we need to check 'src <- a' before
@@ -1975,7 +1986,7 @@ proc paramTypesMatchAux(m: var TCandidate, f, a: PType,
     # XXX: duplicating this is ugly, but we cannot (!) move this
     # directly into typeRel using return-like templates
     incMatches(m, r)
-    if f.kind == tyStmt:
+    if f.kind == tyTyped:
       return arg
     elif f.kind == tyTypeDesc:
       return arg
@@ -2092,14 +2103,21 @@ proc paramTypesMatchAux(m: var TCandidate, f, a: PType,
         result = localConvMatch(c, m, f, a, arg)
       else:
         r = typeRel(m, base(f), a)
-        if r >= isGeneric:
+        case r
+        of isGeneric:
           inc(m.convMatches)
           result = copyTree(arg)
-          if r == isGeneric:
-            result.typ = getInstantiatedType(c, arg, m, base(f))
+          result.typ = getInstantiatedType(c, arg, m, base(f))
           m.baseTypeMatch = true
-        # bug #4799, varargs accepting subtype relation object
-        elif r == isSubtype:
+        of isFromIntLit:
+          inc(m.intConvMatches, 256)
+          result = implicitConv(nkHiddenStdConv, f[0], arg, m, c)
+          m.baseTypeMatch = true
+        of isEqual:
+          inc(m.convMatches)
+          result = copyTree(arg)
+          m.baseTypeMatch = true
+        of isSubtype: # bug #4799, varargs accepting subtype relation object
           inc(m.subtypeMatches)
           if base(f).kind == tyTypeDesc:
             result = arg
@@ -2166,9 +2184,9 @@ proc paramTypesMatch*(m: var TCandidate, f, a: PType,
       if x.state != csMatch:
         internalError(m.c.graph.config, arg.info, "x.state is not csMatch")
       # ambiguous: more than one symbol fits!
-      # See tsymchoice_for_expr as an example. 'f.kind == tyExpr' should match
+      # See tsymchoice_for_expr as an example. 'f.kind == tyUntyped' should match
       # anyway:
-      if f.kind in {tyExpr, tyStmt}: result = arg
+      if f.kind in {tyUntyped, tyTyped}: result = arg
       else: result = nil
     else:
       # only one valid interpretation found:
@@ -2192,8 +2210,8 @@ proc setSon(father: PNode, at: int, son: PNode) =
 
 # we are allowed to modify the calling node in the 'prepare*' procs:
 proc prepareOperand(c: PContext; formal: PType; a: PNode): PNode =
-  if formal.kind == tyExpr and formal.len != 1:
-    # {tyTypeDesc, tyExpr, tyStmt, tyProxy}:
+  if formal.kind == tyUntyped and formal.len != 1:
+    # {tyTypeDesc, tyUntyped, tyTyped, tyProxy}:
     # a.typ == nil is valid
     result = a
   elif a.typ.isNil:
@@ -2202,7 +2220,7 @@ proc prepareOperand(c: PContext; formal: PType; a: PNode): PNode =
     let flags = {efDetermineType, efAllowStmt}
                 #if formal.kind == tyIter: {efDetermineType, efWantIterator}
                 #else: {efDetermineType, efAllowStmt}
-                #elif formal.kind == tyStmt: {efDetermineType, efWantStmt}
+                #elif formal.kind == tyTyped: {efDetermineType, efWantStmt}
                 #else: {efDetermineType}
     result = c.semOperand(c, a, flags)
   else:
@@ -2237,7 +2255,7 @@ proc incrIndexType(t: PType) =
   inc t.sons[0].n.sons[1].intVal
 
 template isVarargsUntyped(x): untyped =
-  x.kind == tyVarargs and x.sons[0].kind == tyExpr
+  x.kind == tyVarargs and x.sons[0].kind == tyUntyped
 
 proc matchesAux(c: PContext, n, nOrig: PNode,
                 m: var TCandidate, marker: var IntSet) =

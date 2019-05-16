@@ -102,7 +102,9 @@ of ``formatValue`` procs. The required signature for a type ``T`` that supports
 formatting is usually ``proc formatValue(result: var string; x: T; specifier: string)``.
 
 The subexpression after the colon
-(``arg`` in ``&"{key} is {value:arg} {{z}}"``) is optional. It will be passed as the last argument to ``formatValue``. When the colon with the subexpression it is left out, an empty string will be taken instead.
+(``arg`` in ``&"{key} is {value:arg} {{z}}"``) is optional. It will be passed as
+the last argument to ``formatValue``. When the colon with the subexpression it is
+left out, an empty string will be taken instead.
 
 For strings and numeric types the optional argument is a so-called
 "standard format specifier".
@@ -215,8 +217,7 @@ Limitations
 ===========
 
 Because of the well defined order how templates and macros are
-expanded, strformat cannot expand template arguments.
-
+expanded, strformat cannot expand template arguments:
 
 .. code-block:: nim
   template myTemplate(arg: untyped): untyped =
@@ -233,27 +234,6 @@ quoted string literal. It is not an identifier yet. Then the strformat
 macro creates the ``arg`` identifier from the string literal. An
 identifier that cannot be resolved anymore.
 
-.. code-block:: nim
-  let x = "abc"
-  myTemplate(x)
-
-  # expansion of myTemplate
-
-  let x = "abc"
-  echo "arg is: ", x
-  echo &"--- {arg} ---"
-
-  # expansion of `&`
-
-  let x = "abc"
-  echo "arg is: ", x
-  echo:
-    var temp = newStringOfCap(20)
-    temp.add "--- "
-    temp.formatValue arg, "" # arg cannot be resolved anymore
-    temp.add " ---"
-    temp
-
 The workaround for this is to bind template argument to a new local variable.
 
 .. code-block:: nim
@@ -265,10 +245,11 @@ The workaround for this is to bind template argument to a new local variable.
       echo &"--- {arg1} ---"
 
 The use of ``{.inject.}`` here is necessary again because of template
-expansion order and hygienic templates. But since we generelly want to
+expansion order and hygienic templates. But since we generally want to
 keep the hygienicness of ``myTemplate``, and we do not want ``arg1``
 to be injected into the context where ``myTemplate`` is expanded,
 everything is wrapped in a ``block``.
+
 
 Future directions
 =================
@@ -438,6 +419,9 @@ proc formatValue*(result: var string; value: SomeInteger; specifier: string) =
   ## Standard format implementation for ``SomeInteger``. It makes little
   ## sense to call this directly, but it is required to exist
   ## by the ``&`` macro.
+  if specifier.len == 0:
+    result.add $value
+    return
   let spec = parseStandardFormatSpecifier(specifier)
   var radix = 10
   case spec.typ
@@ -451,10 +435,13 @@ proc formatValue*(result: var string; value: SomeInteger; specifier: string) =
       " of 'x', 'X', 'b', 'd', 'o' but got: " & spec.typ)
   result.add formatInt(value, radix, spec)
 
-proc formatValue*(result: var string; value: SomeFloat; specifier: string): void =
+proc formatValue*(result: var string; value: SomeFloat; specifier: string) =
   ## Standard format implementation for ``SomeFloat``. It makes little
   ## sense to call this directly, but it is required to exist
   ## by the ``&`` macro.
+  if specifier.len == 0:
+    result.add $value
+    return
   let spec = parseStandardFormatSpecifier(specifier)
 
   var fmode = ffDefault
@@ -476,7 +463,7 @@ proc formatValue*(result: var string; value: SomeFloat; specifier: string): void
   if value >= 0.0:
     if spec.sign != '-':
       sign = true
-      if  value == 0.0:
+      if value == 0.0:
         if 1.0 / value == Inf:
           # only insert the sign if value != negZero
           f.insert($spec.sign, 0)
@@ -486,16 +473,16 @@ proc formatValue*(result: var string; value: SomeFloat; specifier: string): void
     sign = true
 
   if spec.padWithZero:
-    var sign_str = ""
+    var signStr = ""
     if sign:
-      sign_str = $f[0]
+      signStr = $f[0]
       f = f[1..^1]
 
     let toFill = spec.minimumWidth - f.len - ord(sign)
     if toFill > 0:
       f = repeat('0', toFill) & f
     if sign:
-      f = sign_str & f
+      f = signStr & f
 
   # the default for numbers is right-alignment:
   let align = if spec.align == '\0': '>' else: spec.align
@@ -522,22 +509,15 @@ proc formatValue*(result: var string; value: string; specifier: string) =
       setLen(value, runeOffset(value, spec.precision))
   result.add alignString(value, spec.minimumWidth, spec.align, spec.fill)
 
-template formatValue[T: enum](result: var string; value: T; specifier: string) =
-  result.add $value
+proc formatValue[T](result: var string; value: T; specifier: string) =
+  mixin `$`
+  formatValue(result, $value, specifier)
 
 template formatValue(result: var string; value: char; specifier: string) =
   result.add value
 
 template formatValue(result: var string; value: cstring; specifier: string) =
   result.add value
-
-proc formatValue[T](result: var string; value: openarray[T]; specifier: string) =
-  result.add "["
-  for i, it in value:
-    if i != 0:
-      result.add ", "
-    result.formatValue(it, specifier)
-  result.add "]"
 
 macro `&`*(pattern: string): untyped =
   ## For a specification of the ``&`` macro, see the module level documentation.
@@ -738,6 +718,13 @@ when isMainModule:
   for s in invalidUtf8:
     check &"{s:>5}", repeat(" ", 5-s.len) & s
 
+  # bug #11089
+  let flfoo: float = 1.0
+  check &"{flfoo}", "1.0"
+
+  # bug #11092
+  check &"{high(int64)}", "9223372036854775807"
+  check &"{low(int64)}", "-9223372036854775808"
 
   import json
 

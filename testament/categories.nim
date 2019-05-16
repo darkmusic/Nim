@@ -11,6 +11,7 @@
 ## of the compiler.
 
 import important_packages
+import sequtils
 
 const
   specialCategories = [
@@ -514,30 +515,24 @@ proc testNimblePackages(r: var TResults, cat: Category) =
       let buildPath = packagesDir / name
       if not existsDir(buildPath):
         if hasDep:
-          let nimbleProcess = startProcess("nimble", "", ["install", "-y", name],
-                                           options = {poUsePath, poStdErrToStdOut})
-          let nimbleStatus = waitForExitEx(nimbleProcess)
-          nimbleProcess.close
+          let (nimbleCmdLine, nimbleOutput, nimbleStatus) = execCmdEx2("nimble", ["install", "-y", name])
           if nimbleStatus != QuitSuccess:
-            r.addResult(test, targetC, "", "'nimble install' failed", reInstallFailed)
+            let message = "nimble install failed:\n$ " & nimbleCmdLine & "\n" & nimbleOutput
+            r.addResult(test, targetC, "", message, reInstallFailed)
             continue
 
-        let installProcess = startProcess("git", "", ["clone", url, buildPath],
-                                          options = {poUsePath, poStdErrToStdOut})
-        let installStatus = waitForExitEx(installProcess)
-        installProcess.close
+        let (installCmdLine, installOutput, installStatus) = execCmdEx2("git", ["clone", url, buildPath])
         if installStatus != QuitSuccess:
-          r.addResult(test, targetC, "", "'git clone' failed", reInstallFailed)
+          let message = "git clone failed:\n$ " & installCmdLine & "\n" & installOutput
+          r.addResult(test, targetC, "", message, reInstallFailed)
           continue
 
       let cmdArgs = parseCmdLine(cmd)
-      let buildProcess = startProcess(cmdArgs[0], buildPath, cmdArgs[1..^1],
-                                      options = {poUsePath, poStdErrToStdOut})
-      let buildStatus = waitForExitEx(buildProcess)
-      buildProcess.close
 
+      let (buildCmdLine, buildOutput, buildStatus) = execCmdEx2(cmdArgs[0], cmdArgs[1..^1], workingDir=buildPath)
       if buildStatus != QuitSuccess:
-        r.addResult(test, targetC, "", "package test failed", reBuildFailed)
+        let message = "package test failed\n$ " & buildCmdLine & "\n" & buildOutput
+        r.addResult(test, targetC, "", message, reBuildFailed)
       else:
         inc r.passed
         r.addResult(test, targetC, "", "", reSuccess)
@@ -559,7 +554,8 @@ proc testNimblePackages(r: var TResults, cat: Category) =
 
 # ----------------------------------------------------------------------------
 
-const AdditionalCategories = ["debugger", "examples", "lib", "megatest"]
+const AdditionalCategories = ["debugger", "examples", "lib"]
+const MegaTestCat = "megatest"
 
 proc `&.?`(a, b: string): string =
   # candidate for the stdlib?
@@ -653,9 +649,9 @@ proc runJoinedTest(r: var TResults, cat: Category, testsDir: string) =
 
   let args = ["c", "--nimCache:" & outDir, "-d:testing", "--listCmd", "megatest.nim"]
   proc onStdout(line: string) = echo line
-  var (buf, exitCode) = execCmdEx2(command = compilerPrefix, args = args, options = {poStdErrToStdOut, poUsePath}, input = "",
-    onStdout = if verboseMegatest: onStdout else: nil)
+  var (cmdLine, buf, exitCode) = execCmdEx2(command = compilerPrefix, args = args, input = "")
   if exitCode != 0:
+    echo "$ ", cmdLine
     echo buf.string
     quit("megatest compilation failed")
 
@@ -688,7 +684,8 @@ proc runJoinedTest(r: var TResults, cat: Category, testsDir: string) =
 
 # ---------------------------------------------------------------------------
 
-proc processCategory(r: var TResults, cat: Category, options, testsDir: string,
+proc processCategory(r: var TResults, cat: Category,
+                     options, testsDir: string,
                      runJoinableTests: bool) =
   case cat.string.normalize
   of "rodfiles":

@@ -16,12 +16,10 @@ import
   strutils, astalgo, msgs, vmdef, vmgen, nimsets, types, passes,
   parser, vmdeps, idents, trees, renderer, options, transf, parseutils,
   vmmarshal, gorgeimpl, lineinfos, tables, btrees, macrocacheimpl,
-  sighashes
+  modulegraphs, sighashes
 
 from semfold import leValueConv, ordinalValToString
 from evaltempl import evalTemplate
-
-from modulegraphs import ModuleGraph, PPassContext
 
 const
   traceCode = defined(nimVMDebug)
@@ -202,7 +200,7 @@ proc copyValue(src: PNode): PNode =
   of nkStrLit..nkTripleStrLit: result.strVal = src.strVal
   else:
     newSeq(result.sons, sonsLen(src))
-    for i in countup(0, sonsLen(src) - 1):
+    for i in 0 ..< sonsLen(src):
       result.sons[i] = copyValue(src.sons[i])
 
 proc asgnComplex(x: var TFullReg, y: TFullReg) =
@@ -780,7 +778,7 @@ proc rawExecute(c: PCtx, start: int, tos: PStackFrame): TFullReg =
       addSon(b, regs[rb].regToNode)
       var r = diffSets(c.config, regs[ra].node, b)
       discardSons(regs[ra].node)
-      for i in countup(0, sonsLen(r) - 1): addSon(regs[ra].node, r.sons[i])
+      for i in 0 ..< sonsLen(r): addSon(regs[ra].node, r.sons[i])
     of opcCard:
       decodeB(rkInt)
       regs[ra].intVal = nimsets.cardSet(c.config, regs[rb].node)
@@ -1156,7 +1154,7 @@ proc rawExecute(c: PCtx, start: int, tos: PStackFrame): TFullReg =
       # we know the next instruction is a 'fjmp':
       let branch = c.constants[instr.regBx-wordExcess]
       var cond = false
-      for j in countup(0, sonsLen(branch) - 2):
+      for j in 0 .. sonsLen(branch) - 2:
         if overlap(regs[ra].regToNode, branch.sons[j]):
           cond = true
           break
@@ -1758,7 +1756,7 @@ proc rawExecute(c: PCtx, start: int, tos: PStackFrame): TFullReg =
     of opcNDel:
       decodeBC(rkNode)
       let bb = regs[rb].intVal.int
-      for i in countup(0, regs[rc].intVal.int-1):
+      for i in 0 ..< regs[rc].intVal.int:
         delSon(regs[ra].node, bb)
     of opcGenSym:
       decodeBC(rkNode)

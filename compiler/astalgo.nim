@@ -152,14 +152,14 @@ proc lookupInRecord(n: PNode, field: PIdent): PSym =
   result = nil
   case n.kind
   of nkRecList:
-    for i in countup(0, sonsLen(n) - 1):
+    for i in 0 ..< sonsLen(n):
       result = lookupInRecord(n.sons[i], field)
       if result != nil: return
   of nkRecCase:
     if (n.sons[0].kind != nkSym): return nil
     result = lookupInRecord(n.sons[0], field)
     if result != nil: return
-    for i in countup(1, sonsLen(n) - 1):
+    for i in 1 ..< sonsLen(n):
       case n.sons[i].kind
       of nkOfBranch, nkElse:
         result = lookupInRecord(lastSon(n.sons[i]), field)
@@ -175,7 +175,7 @@ proc getModule*(s: PSym): PSym =
   while result != nil and result.kind != skModule: result = result.owner
 
 proc getSymFromList(list: PNode, ident: PIdent, start: int = 0): PSym =
-  for i in countup(start, sonsLen(list) - 1):
+  for i in start ..< sonsLen(list):
     if list.sons[i].kind == nkSym:
       result = list.sons[i].sym
       if result.name.id == ident.id: return
@@ -281,7 +281,7 @@ proc typeToYamlAux(conf: ConfigRef; n: PType, marker: var IntSet, indent: int,
   else:
     if sonsLen(n) > 0:
       sonsRope = rope("[")
-      for i in countup(0, sonsLen(n) - 1):
+      for i in 0 ..< sonsLen(n):
         if i > 0: add(sonsRope, ",")
         addf(sonsRope, "$N$1$2", [rspaces(indent + 4), typeToYamlAux(conf, n.sons[i],
             marker, indent + 4, maxRecDepth - 1)])
@@ -330,7 +330,7 @@ proc treeToYamlAux(conf: ConfigRef; n: PNode, marker: var IntSet, indent: int,
       else:
         if sonsLen(n) > 0:
           addf(result, ",$N$1\"sons\": [", [istr])
-          for i in countup(0, sonsLen(n) - 1):
+          for i in 0 ..< sonsLen(n):
             if i > 0: add(result, ",")
             addf(result, "$N$1$2", [rspaces(indent + 4), treeToYamlAux(conf, n.sons[i],
                 marker, indent + 4, maxRecDepth - 1)])
@@ -424,19 +424,19 @@ proc value(this: var DebugPrinter; value: string) =
 
 proc value(this: var DebugPrinter; value: BiggestInt) =
   if this.useColor:
-     this.res.add numberStyle
+    this.res.add numberStyle
   this.res.add value
   if this.useColor:
-     this.res.add resetStyle
+    this.res.add resetStyle
 
 proc value[T: enum](this: var DebugPrinter; value: T) =
   if this.useColor:
-     this.res.add enumStyle
+    this.res.add enumStyle
   this.res.add "\""
   this.res.add $value
   this.res.add "\""
   if this.useColor:
-     this.res.add resetStyle
+    this.res.add resetStyle
 
 proc value[T: enum](this: var DebugPrinter; value: set[T]) =
   this.openBracket
@@ -463,12 +463,12 @@ template earlyExit(this: var DebugPrinter; n: PType | PNode | PSym) =
     this.res.add(this.currentLine - index)
     this.res.add " lines upwards>"
     if this.useColor:
-       this.res.add resetStyle
+      this.res.add resetStyle
     return
 
-proc value(this: var DebugPrinter; value: PType): void
-proc value(this: var DebugPrinter; value: PNode): void
-proc value(this: var DebugPrinter; value: PSym): void =
+proc value(this: var DebugPrinter; value: PType)
+proc value(this: var DebugPrinter; value: PNode)
+proc value(this: var DebugPrinter; value: PSym) =
   earlyExit(this, value)
 
   this.openCurly
@@ -492,7 +492,7 @@ proc value(this: var DebugPrinter; value: PSym): void =
 
   this.closeCurly
 
-proc value(this: var DebugPrinter; value: PType): void =
+proc value(this: var DebugPrinter; value: PType) =
   earlyExit(this, value)
 
   this.openCurly
@@ -530,7 +530,7 @@ proc value(this: var DebugPrinter; value: PType): void =
 
   this.closeCurly
 
-proc value(this: var DebugPrinter; value: PNode): void =
+proc value(this: var DebugPrinter; value: PNode) =
   earlyExit(this, value)
 
   this.openCurly
@@ -599,7 +599,7 @@ when declared(echo):
   proc debug(n: PNode; conf: ConfigRef) =
     var this: DebugPrinter
     this.visited = initTable[pointer, int]()
-    this.renderSymType = true
+    #this.renderSymType = true
     this.useColor = not defined(windows)
     this.value(n)
     echo($this.res)
@@ -630,7 +630,7 @@ proc objectSetRawInsert(data: var TObjectSeq, obj: RootRef) =
 proc objectSetEnlarge(t: var TObjectSet) =
   var n: TObjectSeq
   newSeq(n, len(t.data) * GrowthFactor)
-  for i in countup(0, high(t.data)):
+  for i in 0 .. high(t.data):
     if t.data[i] != nil: objectSetRawInsert(n, t.data[i])
   swap(t.data, n)
 
@@ -709,7 +709,7 @@ proc symTabReplace*(t: var TStrTable, prevSym: PSym, newSym: PSym) =
 proc strTableEnlarge(t: var TStrTable) =
   var n: seq[PSym]
   newSeq(n, len(t.data) * GrowthFactor)
-  for i in countup(0, high(t.data)):
+  for i in 0 .. high(t.data):
     if t.data[i] != nil: strTableRawInsert(n, t.data[i])
   swap(t.data, n)
 
@@ -845,7 +845,7 @@ iterator items*(tab: TStrTable): PSym =
     s = nextIter(it, tab)
 
 proc hasEmptySlot(data: TIdPairSeq): bool =
-  for h in countup(0, high(data)):
+  for h in 0 .. high(data):
     if data[h].key == nil:
       return true
   result = false
@@ -900,7 +900,7 @@ proc idTablePut(t: var TIdTable, key: PIdObj, val: RootRef) =
   else:
     if mustRehash(len(t.data), t.counter):
       newSeq(n, len(t.data) * GrowthFactor)
-      for i in countup(0, high(t.data)):
+      for i in 0 .. high(t.data):
         if t.data[i].key != nil:
           idTableRawInsert(n, t.data[i].key, t.data[i].val)
       assert(hasEmptySlot(n))
@@ -946,7 +946,7 @@ proc idNodeTablePut(t: var TIdNodeTable, key: PIdObj, val: PNode) =
     if mustRehash(len(t.data), t.counter):
       var n: TIdNodePairSeq
       newSeq(n, len(t.data) * GrowthFactor)
-      for i in countup(0, high(t.data)):
+      for i in 0 .. high(t.data):
         if t.data[i].key != nil:
           idNodeTableRawInsert(n, t.data[i].key, t.data[i].val)
       swap(t.data, n)
@@ -960,7 +960,7 @@ iterator pairs*(t: TIdNodeTable): tuple[key: PIdObj, val: PNode] =
 proc initIITable(x: var TIITable) =
   x.counter = 0
   newSeq(x.data, StartSize)
-  for i in countup(0, StartSize - 1): x.data[i].key = InvalidKey
+  for i in 0 ..< StartSize: x.data[i].key = InvalidKey
 
 proc iiTableRawGet(t: TIITable, key: int): int =
   var h: Hash
@@ -994,8 +994,8 @@ proc iiTablePut(t: var TIITable, key, val: int) =
     if mustRehash(len(t.data), t.counter):
       var n: TIIPairSeq
       newSeq(n, len(t.data) * GrowthFactor)
-      for i in countup(0, high(n)): n[i].key = InvalidKey
-      for i in countup(0, high(t.data)):
+      for i in 0 .. high(n): n[i].key = InvalidKey
+      for i in 0 .. high(t.data):
         if t.data[i].key != InvalidKey:
           iiTableRawInsert(n, t.data[i].key, t.data[i].val)
       swap(t.data, n)

@@ -31,19 +31,10 @@
 
 - `getImpl` on a `var` or `let` symbol will now return the full `IdentDefs`
   tree from the symbol declaration instead of just the initializer portion.
-- it is now possible to use statement list expressions after keywords with
-  indentation: raise, return, discard, yield. This helps parsing code produced 
-  by Nim template expansion where stmtListExpr can appear in place of any expression.
-  Example:
-```nim
-  raise 
-    var e = new(Exception)
-    e.msg = "My Exception msg"
-    e
-```
 
 - To use multi-methods, explicit `--multimethods:on` is now needed.
 
+- Compile time checks for integer and float conversions are now stricter. For example, `const x = uint32(-1)` now gives a compile time error instead of being equivalent to `const x = 0xFFFFFFFF'u32`.
 
 #### Breaking changes in the standard library
 
@@ -57,10 +48,16 @@
 
 - `system.ValueError` now inherits from `system.CatchableError` instead of `system.Defect`.
 
-- The procs `parseutils.parseBiggsetInt`, `parseutils.parseInt`,
+- The procs `parseutils.parseBiggestInt`, `parseutils.parseInt`,
   `parseutils.parseBiggestUInt` and `parseutils.parseUInt` now raise a
   `ValueError` when the parsed integer is outside of the valid range.
   Previously they sometimes raised a `OverflowError` and sometimes returned `0`.
+
+- The procs `parseutils.parseBin`, `parseutils.parseOct` and `parseutils.parseHex`
+  were not clearing their `var` parameter `number` and used to push its value to
+  the left when storing the parsed string into it. Now they always set the value
+  of the parameter to `0` before storing the result of the parsing, unless the
+  string to parse is not valid and then the value of `number` is not changed.
 
 - `streams.StreamObject` now restricts its fields to only raise `system.Defect`,
   `system.IOError` and `system.OSError`.
@@ -101,6 +98,7 @@
 - Custom types that should be supported by `strformat` (&) now need an
   explicit overload of `formatValue`.
 
+
 #### Breaking changes in the compiler
 
 - The compiler now implements the "generic symbol prepass" for `when` statements
@@ -117,6 +115,7 @@ proc enumToString*(enums: openArray[enum]): string =
 ```
 
 - ``discard x`` is now illegal when `x` is a function symbol.
+
 - Implicit imports via ``--import: module`` in a config file are now restricted
   to the main package.
 
@@ -162,6 +161,9 @@ proc enumToString*(enums: openArray[enum]): string =
 
 - Added `system.default`.
 
+- Added `sequtils.items` for closure iterators, allows closure iterators 
+  to be used by the the mapIt, filterIt, allIt, anyIt, etc.
+
 
 ### Library changes
 
@@ -190,6 +192,10 @@ proc enumToString*(enums: openArray[enum]): string =
 
 - `securehash` is moved to `lib/deprecated`
 
+- The switch ``-d:useWinAnsi`` is not supported anymore.
+
+- In `times` module, procs `format` and `parse` accept a new optional `DateTimeLocale` argument for formatting/parsing dates in other languages.
+
 
 ### Language additions
 
@@ -211,14 +217,19 @@ proc enumToString*(enums: openArray[enum]): string =
   it's more recognizable and allows tools like github to recognize it as Nim,
   see [#9647](https://github.com/nim-lang/Nim/issues/9647).
   The previous extension will continue to work.
+
 - Pragma syntax is now consistent. Previous syntax where type pragmas did not
   follow the type name is now deprecated. Also pragma before generic parameter
   list is deprecated to be consistent with how pragmas are used with a proc. See
   [#8514](https://github.com/nim-lang/Nim/issues/8514) and
   [#1872](https://github.com/nim-lang/Nim/issues/1872) for further details.
 
+- Hash sets and tables are initialized by default. The explicit `initHashSet`,
+  `initTable`, etc. are not needed anymore.
+
 
 ### Tool changes
+
 - `jsondoc` now include a `moduleDescription` field with the module
   description. `jsondoc0` shows comments as it's own objects as shown in the
   documentation.
@@ -227,6 +238,7 @@ proc enumToString*(enums: openArray[enum]): string =
 
 
 ### Compiler changes
+
 - The deprecated `fmod` proc is now unavailable on the VM'.
 - A new `--outdir` option was added.
 - The compiled JavaScript file for the project produced by executing `nim js`
@@ -234,5 +246,6 @@ proc enumToString*(enums: openArray[enum]): string =
 - The `--hotCodeReloading` has been implemented for the native targets.
   The compiler also provides a new more flexible API for handling the
   hot code reloading events in the code.
+
 
 ### Bugfixes

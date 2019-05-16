@@ -11,9 +11,7 @@
 
 import
   ast, astalgo, ropes, passes, options, intsets, platform, sighashes,
-  tables, ndi, lineinfos, pathutils
-
-from modulegraphs import ModuleGraph, PPassContext
+  tables, ndi, lineinfos, pathutils, modulegraphs
 
 type
   TLabel* = Rope              # for the C generator a label is just a rope
@@ -72,6 +70,7 @@ type
     threadVarAccessed*: bool  # true if the proc already accessed some threadvar
     hasCurFramePointer*: bool # true if _nimCurFrame var needed to recover after
                               # exception is generated
+    noSafePoints*: bool       # the proc doesn't use safe points in exception handling
     lastLineInfo*: TLineInfo  # to avoid generating excessive 'nimln' statements
     currLineInfo*: TLineInfo  # AST codegen will make this superfluous
     nestedTryStmts*: seq[tuple[n: PNode, inExcept: bool]]

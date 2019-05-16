@@ -122,7 +122,7 @@ proc ordinalValToString*(a: PNode; g: ModuleGraph): string =
     result = $chr(int(x) and 0xff)
   of tyEnum:
     var n = t.n
-    for i in countup(0, sonsLen(n) - 1):
+    for i in 0 ..< sonsLen(n):
       if n.sons[i].kind != nkSym: internalError(g.config, a.info, "ordinalValToString")
       var field = n.sons[i].sym
       if field.position == x:
@@ -356,7 +356,7 @@ proc evalOp(m: TMagic, n, a, b, c: PNode; g: ModuleGraph): PNode =
 
 proc getConstIfExpr(c: PSym, n: PNode; g: ModuleGraph): PNode =
   result = nil
-  for i in countup(0, sonsLen(n) - 1):
+  for i in 0 ..< sonsLen(n):
     var it = n.sons[i]
     if it.len == 2:
       var e = getConstExpr(c, it.sons[0], g)
@@ -512,7 +512,7 @@ proc foldFieldAccess(m: PSym, n: PNode; g: ModuleGraph): PNode =
   if x == nil or x.kind notin {nkObjConstr, nkPar, nkTupleConstr}: return
 
   var field = n.sons[1].sym
-  for i in countup(ord(x.kind == nkObjConstr), sonsLen(x) - 1):
+  for i in ord(x.kind == nkObjConstr) ..< sonsLen(x):
     var it = x.sons[i]
     if it.kind != nkExprColonExpr:
       # lookup per index:
@@ -527,7 +527,7 @@ proc foldFieldAccess(m: PSym, n: PNode; g: ModuleGraph): PNode =
 proc foldConStrStr(m: PSym, n: PNode; g: ModuleGraph): PNode =
   result = newNodeIT(nkStrLit, n.info, n.typ)
   result.strVal = ""
-  for i in countup(1, sonsLen(n) - 1):
+  for i in 1 ..< sonsLen(n):
     let a = getConstExpr(m, n.sons[i], g)
     if a == nil: return nil
     result.strVal.add(getStrOrChar(a))
@@ -559,9 +559,6 @@ proc getConstExpr(m: PSym, n: PNode; g: ModuleGraph): PNode =
       of mBuildOS: result = newStrNodeT(toLowerAscii(platform.OS[g.config.target.hostOS].name), n, g)
       of mBuildCPU: result = newStrNodeT(platform.CPU[g.config.target.hostCPU].name.toLowerAscii, n, g)
       of mAppType: result = getAppType(n, g)
-      of mNaN: result = newFloatNodeT(NaN, n, g)
-      of mInf: result = newFloatNodeT(Inf, n, g)
-      of mNegInf: result = newFloatNodeT(NegInf, n, g)
       of mIntDefine:
         if isDefined(g.config, s.name.s):
           try:
@@ -617,11 +614,17 @@ proc getConstExpr(m: PSym, n: PNode; g: ModuleGraph): PNode =
         # If it has no sideEffect, it should be evaluated. But not here.
         return
       of mLow:
-        result = newIntNodeT(firstOrd(g.config, n.sons[1].typ), n, g)
+        if skipTypes(n.sons[1].typ, abstractVarRange).kind in tyFloat..tyFloat64:
+          result = newFloatNodeT(firstFloat(n.sons[1].typ), n, g)
+        else:
+          result = newIntNodeT(firstOrd(g.config, n.sons[1].typ), n, g)
       of mHigh:
         if skipTypes(n.sons[1].typ, abstractVar+{tyUserTypeClassInst}).kind notin
             {tySequence, tyString, tyCString, tyOpenArray, tyVarargs}:
-          result = newIntNodeT(lastOrd(g.config, skipTypes(n[1].typ, abstractVar)), n, g)
+          if skipTypes(n.sons[1].typ, abstractVarRange).kind in tyFloat..tyFloat64:
+            result = newFloatNodeT(lastFloat(n.sons[1].typ), n, g)
+          else:
+            result = newIntNodeT(lastOrd(g.config, skipTypes(n[1].typ, abstractVar)), n, g)
         else:
           var a = getArrayConstr(m, n.sons[1], g)
           if a.kind == nkBracket:
@@ -665,12 +668,12 @@ proc getConstExpr(m: PSym, n: PNode; g: ModuleGraph): PNode =
     if a != nil:
       result = n
       n.sons[0] = a
-  of nkBracket:
-    result = copyTree(n)
-    for i in countup(0, sonsLen(n) - 1):
-      var a = getConstExpr(m, n.sons[i], g)
+  of nkBracket, nkCurly:
+    result = copyNode(n)
+    for i, son in n.pairs:
+      var a = getConstExpr(m, son, g)
       if a == nil: return nil
-      result.sons[i] = a
+      result.add a
     incl(result.flags, nfAllConst)
   of nkRange:
     var a = getConstExpr(m, n.sons[0], g)
@@ -680,33 +683,29 @@ proc getConstExpr(m: PSym, n: PNode; g: ModuleGraph): PNode =
     result = copyNode(n)
     addSon(result, a)
     addSon(result, b)
-  of nkCurly:
-    result = copyTree(n)
-    for i in countup(0, sonsLen(n) - 1):
-      var a = getConstExpr(m, n.sons[i], g)
-      if a == nil: return nil
-      result.sons[i] = a
-    incl(result.flags, nfAllConst)
   #of nkObjConstr:
   #  result = copyTree(n)
-  #  for i in countup(1, sonsLen(n) - 1):
+  #  for i in 1 ..< sonsLen(n):
   #    var a = getConstExpr(m, n.sons[i].sons[1])
   #    if a == nil: return nil
   #    result.sons[i].sons[1] = a
   #  incl(result.flags, nfAllConst)
   of nkPar, nkTupleConstr:
     # tuple constructor
-    result = copyTree(n)
+    result = copyNode(n)
     if (sonsLen(n) > 0) and (n.sons[0].kind == nkExprColonExpr):
-      for i in countup(0, sonsLen(n) - 1):
-        var a = getConstExpr(m, n.sons[i].sons[1], g)
+      for i, expr in n.pairs:
+        let exprNew = copyNode(expr) # nkExprColonExpr
+        exprNew.add expr[0]
+        let a = getConstExpr(m, expr[1], g)
         if a == nil: return nil
-        result.sons[i].sons[1] = a
+        exprNew.add a
+        result.add exprNew
     else:
-      for i in countup(0, sonsLen(n) - 1):
-        var a = getConstExpr(m, n.sons[i], g)
+      for i, expr in n.pairs:
+        let a = getConstExpr(m, expr, g)
         if a == nil: return nil
-        result.sons[i] = a
+        result.add a
     incl(result.flags, nfAllConst)
   of nkChckRangeF, nkChckRange64, nkChckRange:
     var a = getConstExpr(m, n.sons[0], g)
@@ -727,7 +726,7 @@ proc getConstExpr(m: PSym, n: PNode; g: ModuleGraph): PNode =
     var a = getConstExpr(m, n.sons[1], g)
     if a == nil: return
     # XXX: we should enable `check` for other conversion types too
-    result = foldConv(n, a, g, check=n.kind == nkHiddenSubConv)
+    result = foldConv(n, a, g, check=n.kind == nkHiddenStdConv)
   of nkCast:
     var a = getConstExpr(m, n.sons[1], g)
     if a == nil: return

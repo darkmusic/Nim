@@ -366,7 +366,7 @@ proc genIf(c: PCtx, n: PNode; dest: var TDest) =
   #  Lend:
   if dest < 0 and not isEmptyType(n.typ): dest = getTemp(c, n.typ)
   var endings: seq[TPosition] = @[]
-  for i in countup(0, len(n) - 1):
+  for i in 0 ..< len(n):
     var it = n.sons[i]
     if it.len == 2:
       withTemp(tmp, it.sons[0].typ):
@@ -436,7 +436,7 @@ proc sameConstant*(a, b: PNode): bool =
     of nkEmpty: result = true
     else:
       if sonsLen(a) == sonsLen(b):
-        for i in countup(0, sonsLen(a) - 1):
+        for i in 0 ..< sonsLen(a):
           if not sameConstant(a.sons[i], b.sons[i]): return
         result = true
 
@@ -510,7 +510,7 @@ proc genTry(c: PCtx; n: PNode; dest: var TDest) =
       var blen = len(it)
       # first opcExcept contains the end label of the 'except' block:
       let endExcept = c.xjmp(it, opcExcept, 0)
-      for j in countup(0, blen - 2):
+      for j in 0 .. blen - 2:
         assert(it.sons[j].kind == nkType)
         let typ = it.sons[j].typ.skipTypes(abstractPtrs-{tyTypeDesc})
         c.gABx(it, opcExcept, 0, c.genType(typ))
@@ -931,6 +931,21 @@ proc ldNullOpcode(t: PType): TOpcode =
   assert t != nil
   if fitsRegister(t): opcLdNullReg else: opcLdNull
 
+proc whichAsgnOpc(n: PNode): TOpcode =
+  case n.typ.skipTypes(abstractRange+{tyOwned}-{tyTypeDesc}).kind
+  of tyBool, tyChar, tyEnum, tyOrdinal, tyInt..tyInt64, tyUInt..tyUInt64:
+    opcAsgnInt
+  of tyString, tyCString:
+    opcAsgnStr
+  of tyFloat..tyFloat128:
+    opcAsgnFloat
+  of tyRef, tyNil, tyVar, tyLent, tyPtr:
+    opcAsgnRef
+  else:
+    opcAsgnComplex
+
+proc whichAsgnOpc(n: PNode; opc: TOpcode): TOpcode = opc
+
 proc genMagic(c: PCtx; n: PNode; dest: var TDest; m: TMagic) =
   case m
   of mAnd: c.genAndOr(n, opcFJmp, dest)
@@ -957,7 +972,7 @@ proc genMagic(c: PCtx; n: PNode; dest: var TDest; m: TMagic) =
     c.genNarrow(n.sons[1], d)
     c.genAsgnPatch(n.sons[1], d)
     c.freeTemp(d)
-  of mOrd, mChr, mArrToSeq: c.gen(n.sons[1], dest)
+  of mOrd, mChr, mArrToSeq, mUnown: c.gen(n.sons[1], dest)
   of mNew, mNewFinalize:
     unused(c, n, dest)
     c.genNew(n)
@@ -1330,6 +1345,17 @@ proc genMagic(c: PCtx; n: PNode; dest: var TDest; m: TMagic) =
   of mRunnableExamples:
     discard "just ignore any call to runnableExamples"
   of mDestroy: discard "ignore calls to the default destructor"
+  of mMove:
+    let arg = n[1]
+    let a = c.genx(arg)
+    assert dest >= 0
+    if dest < 0: dest = c.getTemp(arg.typ)
+    gABC(c, arg, whichAsgnOpc(arg), dest, a, 1)
+    # XXX use ldNullOpcode() here?
+    c.gABx(n, opcLdNull, a, c.genType(arg.typ))
+    c.gABx(n, opcNodeToReg, a, a)
+    c.genAsgnPatch(arg, a)
+    c.freeTemp(a)
   else:
     # mGCref, mGCunref,
     globalError(c.config, n.info, "cannot generate code for: " & $m)
@@ -1352,7 +1378,7 @@ proc genMarshalStore(c: PCtx, n: PNode, dest: var TDest) =
 
 const
   atomicTypes = {tyBool, tyChar,
-    tyExpr, tyStmt, tyTypeDesc, tyStatic,
+    tyUntyped, tyTyped, tyTypeDesc, tyStatic,
     tyEnum,
     tyOrdinal,
     tyRange,
@@ -1422,21 +1448,6 @@ proc genDeref(c: PCtx, n: PNode, dest: var TDest, flags: TGenFlags) =
     assert n.typ != nil
     if {gfNodeAddr, gfNode} * flags == {} and fitsRegister(n.typ):
       c.gABC(n, opcNodeToReg, dest, dest)
-
-proc whichAsgnOpc(n: PNode): TOpcode =
-  case n.typ.skipTypes(abstractRange+{tyOwned}-{tyTypeDesc}).kind
-  of tyBool, tyChar, tyEnum, tyOrdinal, tyInt..tyInt64, tyUInt..tyUInt64:
-    opcAsgnInt
-  of tyString, tyCString:
-    opcAsgnStr
-  of tyFloat..tyFloat128:
-    opcAsgnFloat
-  of tyRef, tyNil, tyVar, tyLent, tyPtr:
-    opcAsgnRef
-  else:
-    opcAsgnComplex
-
-proc whichAsgnOpc(n: PNode; opc: TOpcode): TOpcode = opc
 
 proc genAsgn(c: PCtx; dest: TDest; ri: PNode; requiresCopy: bool) =
   let tmp = c.genx(ri)
@@ -1564,6 +1575,9 @@ proc genTypeLit(c: PCtx; t: PType; dest: var TDest) =
   n.typ = t
   genLit(c, n, dest)
 
+proc importcCond(s: PSym): bool {.inline.} =
+  sfImportc in s.flags and (lfDynamicLib notin s.loc.flags or s.ast == nil)
+
 proc importcSym(c: PCtx; info: TLineInfo; s: PSym) =
   when hasFFI:
     if compiletimeFFI in c.config.features:
@@ -1573,7 +1587,7 @@ proc importcSym(c: PCtx; info: TLineInfo; s: PSym) =
       localError(c.config, info, "VM is not allowed to 'importc'")
   else:
     localError(c.config, info,
-               "cannot 'importc' variable at compile time")
+               "cannot 'importc' variable at compile time; " & s.name.s)
 
 proc getNullValue*(typ: PType, info: TLineInfo; conf: ConfigRef): PNode
 
@@ -1585,8 +1599,8 @@ proc genGlobalInit(c: PCtx; n: PNode; s: PSym) =
   #   var decls{.compileTime.}: seq[NimNode] = @[]
   let dest = c.getTemp(s.typ)
   c.gABx(n, opcLdGlobal, dest, s.position)
-  if s.ast != nil:
-    let tmp = c.genx(s.ast)
+  if s.astdef != nil:
+    let tmp = c.genx(s.astdef)
     c.genAdditionalCopy(n, opcWrDeref, dest, 0, tmp)
     c.freeTemp(dest)
     c.freeTemp(tmp)
@@ -1601,7 +1615,7 @@ proc genRdVar(c: PCtx; n: PNode; dest: var TDest; flags: TGenFlags) =
     elif s.position == 0:
       cannotEval(c, n)
     if s.position == 0:
-      if sfImportc in s.flags: c.importcSym(n.info, s)
+      if importcCond(s): c.importcSym(n.info, s)
       else: genGlobalInit(c, n, s)
     if dest < 0: dest = c.getTemp(n.typ)
     assert s.typ != nil
@@ -1728,10 +1742,10 @@ proc genArrAccess(c: PCtx; n: PNode; dest: var TDest; flags: TGenFlags) =
 proc getNullValueAux(obj: PNode, result: PNode; conf: ConfigRef) =
   case obj.kind
   of nkRecList:
-    for i in countup(0, sonsLen(obj) - 1): getNullValueAux(obj.sons[i], result, conf)
+    for i in 0 ..< sonsLen(obj): getNullValueAux(obj.sons[i], result, conf)
   of nkRecCase:
     getNullValueAux(obj.sons[0], result, conf)
-    for i in countup(1, sonsLen(obj) - 1):
+    for i in 1 ..< sonsLen(obj):
       getNullValueAux(lastSon(obj.sons[i]), result, conf)
   of nkSym:
     let field = newNodeI(nkExprColonExpr, result.info)
@@ -1752,8 +1766,8 @@ proc getNullValue(typ: PType, info: TLineInfo; conf: ConfigRef): PNode =
   of tyCString, tyString:
     result = newNodeIT(nkStrLit, info, t)
     result.strVal = ""
-  of tyVar, tyLent, tyPointer, tyPtr, tyExpr,
-     tyStmt, tyTypeDesc, tyRef, tyNil:
+  of tyVar, tyLent, tyPointer, tyPtr, tyUntyped,
+     tyTyped, tyTypeDesc, tyRef, tyNil:
     result = newNodeIT(nkNilLit, info, t)
   of tyProc:
     if t.callConv != ccClosure:
@@ -1773,11 +1787,11 @@ proc getNullValue(typ: PType, info: TLineInfo; conf: ConfigRef): PNode =
     getNullValueAux(t.n, result, conf)
   of tyArray:
     result = newNodeIT(nkBracket, info, t)
-    for i in countup(0, int(lengthOrd(conf, t)) - 1):
+    for i in 0 ..< int(lengthOrd(conf, t)):
       addSon(result, getNullValue(elemType(t), info, conf))
   of tyTuple:
     result = newNodeIT(nkTupleConstr, info, t)
-    for i in countup(0, sonsLen(t) - 1):
+    for i in 0 ..< sonsLen(t):
       addSon(result, getNullValue(t.sons[i], info, conf))
   of tySet:
     result = newNodeIT(nkCurly, info, t)
@@ -1804,7 +1818,7 @@ proc genVarSection(c: PCtx; n: PNode) =
       checkCanEval(c, a.sons[0])
       if s.isGlobal:
         if s.position == 0:
-          if sfImportc in s.flags: c.importcSym(a.info, s)
+          if importcCond(s): c.importcSym(a.info, s)
           else:
             let sa = getNullValue(s.typ, a.info, c.config)
             #if s.ast.isNil: getNullValue(s.typ, a.info)
@@ -1961,7 +1975,7 @@ proc gen(c: PCtx; n: PNode; dest: var TDest; flags: TGenFlags = {}) =
     of skProc, skFunc, skConverter, skMacro, skTemplate, skMethod, skIterator:
       # 'skTemplate' is only allowed for 'getAst' support:
       if procIsCallback(c, s): discard
-      elif sfImportc in s.flags: c.importcSym(n.info, s)
+      elif importcCond(s): c.importcSym(n.info, s)
       genLit(c, n, dest)
     of skConst:
       let constVal = if s.ast != nil: s.ast else: s.typ.n

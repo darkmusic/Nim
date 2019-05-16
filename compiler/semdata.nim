@@ -72,12 +72,6 @@ type
 
   TExprFlags* = set[TExprFlag]
 
-  TTypeAttachedOp* = enum
-    attachedAsgn,
-    attachedSink,
-    attachedDeepCopy,
-    attachedDestructor
-
   PContext* = ref TContext
   TContext* = object of TPassContext # a context represents a module
     enforceVoidContext*: PType
@@ -219,7 +213,7 @@ proc newOptionEntry*(conf: ConfigRef): POptionEntry =
 
 proc newContext*(graph: ModuleGraph; module: PSym): PContext =
   new(result)
-  result.enforceVoidContext = PType(kind: tyStmt)
+  result.enforceVoidContext = PType(kind: tyTyped)
   result.ambiguousSymbols = initIntSet()
   result.optionStack = @[]
   result.libs = @[]
@@ -241,7 +235,7 @@ proc newContext*(graph: ModuleGraph; module: PSym): PContext =
 
 proc inclSym(sq: var seq[PSym], s: PSym) =
   var L = len(sq)
-  for i in countup(0, L - 1):
+  for i in 0 ..< L:
     if sq[i].id == s.id: return
   setLen(sq, L + 1)
   sq[L] = s

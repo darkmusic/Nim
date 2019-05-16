@@ -179,14 +179,14 @@ proc lookupInRecord(n: PNode, id: int): PSym =
   result = nil
   case n.kind
   of nkRecList:
-    for i in countup(0, sonsLen(n) - 1):
+    for i in 0 ..< sonsLen(n):
       result = lookupInRecord(n.sons[i], id)
       if result != nil: return
   of nkRecCase:
     if n.sons[0].kind != nkSym: return
     result = lookupInRecord(n.sons[0], id)
     if result != nil: return
-    for i in countup(1, sonsLen(n) - 1):
+    for i in 1 ..< sonsLen(n):
       case n.sons[i].kind
       of nkOfBranch, nkElse:
         result = lookupInRecord(lastSon(n.sons[i]), id)
@@ -204,7 +204,7 @@ proc addField*(obj: PType; s: PSym; cache: IdentCache) =
   field.id = -s.id
   let t = skipIntLit(s.typ)
   field.typ = t
-  assert t.kind != tyStmt
+  assert t.kind != tyTyped
   field.position = sonsLen(obj.n)
   addSon(obj.n, newSymNode(field))
 
@@ -216,7 +216,7 @@ proc addUniqueField*(obj: PType; s: PSym; cache: IdentCache): PSym {.discardable
     field.id = -s.id
     let t = skipIntLit(s.typ)
     field.typ = t
-    assert t.kind != tyStmt
+    assert t.kind != tyTyped
     field.position = sonsLen(obj.n)
     addSon(obj.n, newSymNode(field))
     result = field
@@ -300,8 +300,8 @@ proc genAddrOf*(n: PNode): PNode =
   result.typ = newType(tyPtr, n.typ.owner)
   result.typ.rawAddSon(n.typ)
 
-proc genDeref*(n: PNode): PNode =
-  result = newNodeIT(nkHiddenDeref, n.info,
+proc genDeref*(n: PNode; k = nkHiddenDeref): PNode =
+  result = newNodeIT(k, n.info,
                      n.typ.skipTypes(abstractInst).sons[0])
   result.add n
 

@@ -129,7 +129,7 @@ proc next*(r: var Rand): uint64 =
   ##   a given upper bound
   ## * `rand proc<#rand,Rand,range[]>`_ that returns a float
   ## * `rand proc<#rand,Rand,HSlice[T,T]>`_ that accepts a slice
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   ## * `skipRandomNumbers proc<#skipRandomNumbers,Rand>`_
   runnableExamples:
     var r = initRand(2019)
@@ -242,7 +242,7 @@ proc rand*(r: var Rand; max: Natural): int {.benign.} =
   ##   random number generator
   ## * `rand proc<#rand,Rand,range[]>`_ that returns a float
   ## * `rand proc<#rand,Rand,HSlice[T,T]>`_ that accepts a slice
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   runnableExamples:
     var r = initRand(123)
     doAssert r.rand(100) == 0
@@ -268,7 +268,7 @@ proc rand*(max: int): int {.benign.} =
   ##   provided state
   ## * `rand proc<#rand,float>`_ that returns a float
   ## * `rand proc<#rand,HSlice[T,T]>`_ that accepts a slice
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   runnableExamples:
     randomize(123)
     doAssert rand(100) == 0
@@ -285,7 +285,7 @@ proc rand*(r: var Rand; max: range[0.0 .. high(float)]): float {.benign.} =
   ##   random number generator
   ## * `rand proc<#rand,Rand,Natural>`_ that returns an integer
   ## * `rand proc<#rand,Rand,HSlice[T,T]>`_ that accepts a slice
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   runnableExamples:
     var r = initRand(234)
     let f = r.rand(1.0)
@@ -311,31 +311,41 @@ proc rand*(max: float): float {.benign.} =
   ##   provided state
   ## * `rand proc<#rand,int>`_ that returns an integer
   ## * `rand proc<#rand,HSlice[T,T]>`_ that accepts a slice
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   runnableExamples:
     randomize(234)
     let f = rand(1.0)
     ## f = 8.717181376738381e-07
   rand(state, max)
 
-proc rand*[T: Ordinal](r: var Rand; x: HSlice[T, T]): T =
+proc rand*[T: Ordinal or SomeFloat](r: var Rand; x: HSlice[T, T]): T =
   ## For a slice `a..b`, returns a value in the range `a..b` using the given
   ## state.
+  ##
+  ## Allowed input types are:
+  ## * Integer
+  ## * Floats
+  ## * Enums without holes 
   ##
   ## See also:
   ## * `rand proc<#rand,HSlice[T,T]>`_ that accepts a slice and uses the
   ##   default random number generator
   ## * `rand proc<#rand,Rand,Natural>`_ that returns an integer
   ## * `rand proc<#rand,Rand,range[]>`_ that returns a float
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   runnableExamples:
     var r = initRand(345)
     doAssert r.rand(1..6) == 4
     doAssert r.rand(1..6) == 4
     doAssert r.rand(1..6) == 6
-  result = T(rand(r, int(x.b) - int(x.a)) + int(x.a))
+    let f = r.rand(-1.0 .. 1.0)
+    ## f = 0.8741183448756229
+  when T is SomeFloat:
+    result = rand(r, x.b - x.a) + x.a
+  else: # Integers and Enum types
+    result = T(rand(r, int(x.b) - int(x.a)) + int(x.a))
 
-proc rand*[T: Ordinal](x: HSlice[T, T]): T =
+proc rand*[T: Ordinal or SomeFloat](x: HSlice[T, T]): T =
   ## For a slice `a..b`, returns a value in the range `a..b`.
   ##
   ## If `randomize<#randomize>`_ has not been called, the sequence of random
@@ -349,7 +359,7 @@ proc rand*[T: Ordinal](x: HSlice[T, T]): T =
   ##   a provided state
   ## * `rand proc<#rand,int>`_ that returns an integer
   ## * `rand proc<#rand,float>`_ that returns a floating point number
-  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer type
+  ## * `rand proc<#rand,typedesc[T]>`_ that accepts an integer or range type
   runnableExamples:
     randomize(345)
     doAssert rand(1..6) == 4
@@ -383,7 +393,13 @@ proc rand*[T: SomeInteger](t: typedesc[T]): T =
     doAssert rand(uint32) == 578980729'u32
     doAssert rand(uint32) == 4052940463'u32
     doAssert rand(uint32) == 2163872389'u32
-  result = cast[T](state.next)
+    doAssert rand(range[1..16]) == 11
+    doAssert rand(range[1..16]) == 4
+    doAssert rand(range[1..16]) == 16
+  when T is range:
+    result = rand(state, low(T)..high(T))
+  else:
+    result = cast[T](state.next)
 
 proc rand*[T](a: openArray[T]): T {.deprecated.} =
   ## **Deprecated since version 0.20.0:**

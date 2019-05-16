@@ -360,6 +360,13 @@ when defined(nimHasSignatureHashInMacro):
     ## the owning module of the symbol and others. The same identifier is
     ## used in the back-end to produce the mangled symbol name.
 
+proc symBodyHash*(s: NimNode): string {.noSideEffect.} =
+  ## Returns a stable digest for symbols derived not only from type signature
+  ## and owning module, but also implementation body. All procs/varibles used in
+  ## the implementation of this symbol are hashed recursively as well, including
+  ## magics from system module.
+  discard
+
 proc getTypeImpl*(n: typedesc): NimNode {.magic: "NGetType", noSideEffect.}
   ## Version of ``getTypeImpl`` which takes a ``typedesc``.
 
@@ -554,9 +561,7 @@ proc quote*(bl: typed, op = "``"): NimNode {.magic: "QuoteAst", noSideEffect.}
   ## Within the quoted AST, you are able to interpolate NimNode expressions
   ## from the surrounding scope. If no operator is given, quoting is done using
   ## backticks. Otherwise, the given operator must be used as a prefix operator
-  ## for any interpolated expression. The original meaning of the interpolation
-  ## operator may be obtained by escaping it (by prefixing it with itself):
-  ## e.g. `@` is escaped as `@@`, `@@` is escaped as `@@@` and so on.
+  ## for any interpolated expression.
   ##
   ## Example:
   ##
@@ -1069,20 +1074,24 @@ proc expectKind*(n: NimNode; k: set[NimNodeKind]) {.compileTime.} =
   ## macros that check the AST that is passed to them.
   if n.kind notin k: error("Expected one of " & $k & ", got " & $n.kind, n)
 
-proc newProc*(name = newEmptyNode(); params: openArray[NimNode] = [newEmptyNode()];
-    body: NimNode = newStmtList(), procType = nnkProcDef): NimNode {.compileTime.} =
+proc newProc*(name = newEmptyNode();
+              params: openArray[NimNode] = [newEmptyNode()];
+              body: NimNode = newStmtList();
+              procType = nnkProcDef;
+              pragmas: NimNode = newEmptyNode()): NimNode {.compileTime.} =
   ## shortcut for creating a new proc
   ##
   ## The ``params`` array must start with the return type of the proc,
   ## followed by a list of IdentDefs which specify the params.
   if procType notin RoutineNodes:
     error("Expected one of " & $RoutineNodes & ", got " & $procType)
+  pragmas.expectKind({nnkEmpty, nnkPragma})
   result = newNimNode(procType).add(
     name,
     newEmptyNode(),
     newEmptyNode(),
     newNimNode(nnkFormalParams).add(params),
-    newEmptyNode(),  # pragmas
+    pragmas,
     newEmptyNode(),
     body)
 
@@ -1098,6 +1107,8 @@ proc newIfStmt*(branches: varargs[tuple[cond, body: NimNode]]):
   ##    )
   ##
   result = newNimNode(nnkIfStmt)
+  if len(branches) < 1:
+    error("If statement must have at least one branch")
   for i in branches:
     result.add(newTree(nnkElifBranch, i.cond, i.body))
 
